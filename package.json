@@ -2,18 +2,37 @@
   "name": "tossdown-ai",
   "version": "0.1.0",
   "private": true,
-  "scripts": {"dev":"next dev","build":"next build","start":"next start","lint":"eslint .","typecheck":"tsc --noEmit","test":"vitest run"},
-  "dependencies": {
-    "@aws-sdk/client-bedrock-runtime":"^3.901.0",
-    "@vercel/oidc-aws-credentials-provider":"^3.3.15",
-    "next":"^15.5.6",
-    "next-auth":"^5.0.0-beta.29",
-    "@upstash/ratelimit":"^2.0.6",
-    "@upstash/redis":"^1.35.3",
-    "react":"^19.1.0",
-    "react-dom":"^19.1.0",
-    "react-markdown":"^10.1.0",
-    "remark-gfm":"^4.0.1"
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
-  "devDependencies": {"@types/node":"^22.15.0","@types/react":"^19.1.0","@types/react-dom":"^19.1.0","@vitejs/plugin-react":"^4.4.1","autoprefixer":"^10.4.21","eslint":"^9.20.0","eslint-config-next":"^15.5.6","postcss":"^8.5.3","tailwindcss":"^3.4.17","typescript":"^5.8.2","vitest":"^3.1.1","jsdom":"^26.0.0"}
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.901.0",
+    "@upstash/ratelimit": "^2.0.6",
+    "@upstash/redis": "^1.35.3",
+    "@vercel/oidc-aws-credentials-provider": "^3.3.15",
+    "next": "^15.5.6",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.4.1",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^9.20.0",
+    "eslint-config-next": "^15.5.6",
+    "jsdom": "^26.0.0",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.8.2",
+    "vitest": "^3.1.1"
+  }
 }

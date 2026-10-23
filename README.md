@@ -1,18 +1,18 @@
 # tossdown AI
 
-Internal marketing chat for verified `@tossdown.com` employees. The MVP uses Next.js App Router, Auth.js Google sign-in, Amazon Bedrock ConverseStream, Upstash Redis rate limiting, and Vercel OIDC for short-lived AWS credentials.
+Internal marketing chat. This version is publicly reachable and does not require Google sign-in. The MVP uses Next.js App Router, Amazon Bedrock ConverseStream, Upstash Redis rate limiting, and Vercel OIDC for short-lived AWS credentials.
+
+Google sign-in was removed at the request of the owner. It previously restricted access to verified `@tossdown.com` employees. Without it, anyone who can reach the deployment may use the app; keep the deployment private or add an organization-approved access layer before sharing it broadly. Do not send confidential information.
 
 ## Local startup
 
 1. Install Node.js 20+ and run `npm install`.
 2. Copy `.env.example` to `.env.local`; fill in the values below. Never commit `.env.local`.
-3. Configure Google OAuth (next section), then run `npm run dev`.
+3. Run `npm run dev`.
 4. For a local-only UI demo, set `MOCK_MODE=true`; the UI labels every mock response and this mode is rejected in production.
 
 ## Required configuration
 
-- `AUTH_SECRET`: `openssl rand -base64 32`.
-- `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET`: a Google OAuth Web application client. Add `http://localhost:3000/api/auth/callback/google` as an authorized redirect URI. Add the deployed URL plus `/api/auth/callback/google` after Vercel creates the domain. Restrict the OAuth consent audience as appropriate for your Workspace.
 - `BEDROCK_MODEL_ID`: in AWS Console, open Amazon Bedrock > Playgrounds > Chat, select the Claude Sonnet 4.6 model/profile that successfully worked, then copy the exact Model ID or inference profile ID shown in the model selector/details panel. Do not infer or substitute an ID. This value is server-only.
 - `AWS_REGION=eu-north-1`.
 - `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`: create a Redis database in Upstash and copy its REST connection values. The app fails closed when rate limiting is absent.
@@ -30,7 +30,7 @@ If the selected identifier is a cross-region inference profile, the policy must 
 
 ## Verification
 
-Run `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build`. Local checks cover auth/domain/request validation/rate-limit behavior without contacting AWS. A real Bedrock response, model access, IAM permissions, Google OAuth callback, Vercel OIDC exchange, and Upstash connectivity still require the configuration above.
+Run `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build`. Local checks cover request validation and rate-limit configuration without contacting AWS. A real Bedrock response, model access, IAM permissions, Vercel OIDC exchange, and Upstash connectivity still require the configuration above.
 
 The app intentionally does not include n8n, agents, files, browsing, admin tools, or deployment automation in this MVP.
 
