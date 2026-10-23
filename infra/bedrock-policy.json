@@ -1,0 +1,12 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "InvokeSelectedClaudeProfile",
+    "Effect": "Allow",
+    "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+    "Resource": [
+      "arn:aws:bedrock:REPLACE_PROFILE_REGION:REPLACE_AWS_ACCOUNT_ID:inference-profile/REPLACE_PROFILE_ID",
+      "arn:aws:bedrock:REPLACE_DESTINATION_REGION::foundation-model/REPLACE_DESTINATION_MODEL_ID"
+    ]
+  }]
+}
