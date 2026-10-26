@@ -12,8 +12,8 @@ Each object is created server-side through the direct Meta Marketing API using `
 
 1. Select an accessible ad account.
 2. Enter campaign name, objective, and special category.
-3. Enter ad set name, daily budget, billing event, optimization goal, country targeting, and optional schedule.
-4. Enter creative name, Facebook Page ID, primary text, headline, CTA, destination URL, and upload an image. An existing Meta video ID remains an optional advanced path.
+3. Enter ad set name, daily budget in minor currency units, country, and age range. Traffic uses link-click optimization; Sales uses Purchase conversion optimization and requires a Pixel ID.
+4. Enter creative name, Facebook Page ID, primary text, headline, CTA, destination URL, and upload a JPEG or PNG image.
 5. Review the complete package and its enforced paused states.
 6. Confirm once.
 7. Create and verify campaign, ad set, creative, and ad in order.
@@ -31,20 +31,20 @@ Each object is created server-side through the direct Meta Marketing API using `
 The server validates the complete input before approval. The execute helper sends:
 
 - `POST /act_{account_id}/campaigns`: name, objective, `special_ad_categories` (`["NONE"]` when none), `status=PAUSED`, and `is_adset_budget_sharing_enabled=false`.
-- `POST /{campaign_id}/adsets`: name, campaign ID, daily budget, billing event, optimization goal, targeting, and `status=PAUSED`.
-- `POST /act_{account_id}/adimages`: server-side multipart upload of the selected image; retain only the returned Meta image hash for the approval execution.
-- `POST /act_{account_id}/adcreatives`: name, object story spec using the supplied Page ID and uploaded image hash or video ID, copy, CTA, and link.
+- `POST /act_{account_id}/adsets`: name, campaign ID, daily budget, billing event, optimization goal, targeting, and `status=PAUSED`.
+- `POST /act_{account_id}/adimages`: server-side multipart upload after approval; the approved image SHA-256 must match the submitted file.
+- `POST /act_{account_id}/adcreatives`: name and object story spec using the supplied Page ID and uploaded image hash, copy, CTA, and link.
 - `POST /act_{account_id}/ads`: name, ad set ID, creative ID, and `status=PAUSED`.
 
 Readback verifies IDs, relationships, and paused/configured status before success.
 
-## Required product decisions before implementation
+## First release constraints
 
-- Default country or multi-country targeting behavior.
-- Supported billing events and optimization goals per objective.
-- Image upload is the v1 creative path; video ID is optional advanced input. Direct video upload is deferred.
-- Page IDs and existing video IDs are entered manually in v1; media identifiers may be fetched through additional read-only endpoints later.
-- Budget currency display and minimum budget validation.
+- Traffic and Sales are the supported objectives for full-package creation. Sales uses a supplied Pixel ID and Purchase event.
+- Country and age range are explicit. Other targeting and placement controls use Meta defaults.
+- Image upload is the creative path. Direct video upload is deferred.
+- Facebook Page ID and optional Instagram actor ID are entered manually.
+- Budget is entered as an integer in the ad account's minor currency units; account currency is read from Meta.
 
 ## Test plan
 
