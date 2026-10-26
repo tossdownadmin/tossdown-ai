@@ -1,9 +1,15 @@
 import { BedrockRuntimeClient, ConverseStreamCommand } from "@aws-sdk/client-bedrock-runtime";
+import { fromStatic } from "@aws-sdk/token-providers";
 import { awsCredentialsProvider } from "@vercel/oidc-aws-credentials-provider";
 import { LIMITS } from "./limits";
 
 const system = "You are tossdown AI, an internal marketing assistant for tossdown employees. Be practical, clear, and honest. Help with ads, creative briefs, plans, and analysis. Do not claim access to live campaign data unless it is provided in the conversation. Keep recommendations concise and structured.";
-function client() { const region = process.env.AWS_REGION || "eu-north-1"; return new BedrockRuntimeClient({ region, ...(process.env.AWS_ROLE_ARN ? { credentials: awsCredentialsProvider({ roleArn: process.env.AWS_ROLE_ARN }) } : {}) }); }
+function client() {
+  const region = process.env.AWS_REGION || "eu-north-1";
+  const bearerToken = process.env.AWS_BEARER_TOKEN_BEDROCK;
+  if (bearerToken) return new BedrockRuntimeClient({ region, token: fromStatic({ token: { token: bearerToken } }) });
+  return new BedrockRuntimeClient({ region, ...(process.env.AWS_ROLE_ARN ? { credentials: awsCredentialsProvider({ roleArn: process.env.AWS_ROLE_ARN }) } : {}) });
+}
 export async function streamBedrock(messages: {role:"user"|"assistant";content:string}[]) {
   const modelId = process.env.BEDROCK_MODEL_ID;
   if (!modelId) throw new Error("BEDROCK_NOT_CONFIGURED");

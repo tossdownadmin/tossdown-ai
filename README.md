@@ -15,8 +15,11 @@ Google sign-in was removed at the request of the owner. It previously restricted
 
 - `BEDROCK_MODEL_ID`: in AWS Console, open Amazon Bedrock > Playgrounds > Chat, select the Claude Sonnet 4.6 model/profile that successfully worked, then copy the exact Model ID or inference profile ID shown in the model selector/details panel. Do not infer or substitute an ID. This value is server-only.
 - `AWS_REGION=eu-north-1`.
+- `AWS_BEARER_TOKEN_BEDROCK`: optional server-only Amazon Bedrock API key. When present, the current AWS SDK bearer-token provider is used and it takes precedence over IAM/OIDC. Never expose, log, or commit this value. Generate/manage the key in Amazon Bedrock > API keys for the target Region. API keys are limited to Bedrock and may have a short lifetime depending on how they were generated.
 - `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`: create a Redis database in Upstash and copy its REST connection values. The app fails closed when rate limiting is absent.
 - `AWS_ROLE_ARN`: the IAM role created below; only needed for Vercel OIDC. Local development uses the standard AWS SDK credential chain if this is omitted.
+
+When `AWS_BEARER_TOKEN_BEDROCK` is empty or absent, the app falls back to the existing `AWS_ROLE_ARN` Vercel OIDC configuration, or the standard AWS credential chain locally. The token is only read server-side by the Bedrock client and is never sent to the browser.
 
 ## Vercel and GitHub
 
@@ -26,7 +29,7 @@ Import `tossdownadmin/tossdown-ai` in Vercel, select the Next.js framework, and 
 
 Vercel's current official AWS OIDC flow uses `@vercel/oidc-aws-credentials-provider` and `AWS_ROLE_ARN`. In Vercel Project Settings > Security > Secure backend access with OIDC federation, choose Team issuer mode and note your team slug. Create an AWS IAM OpenID Connect provider with URL `https://oidc.vercel.com/TEAM_SLUG` and audience `https://vercel.com/TEAM_SLUG`. Create a role using `infra/trust-policy.json`, replacing every `REPLACE_*` value; its `sub` condition is restricted to this project and preview/production environments. Attach `infra/bedrock-policy.json` after replacing the exact model/profile ARN and any required destination model ARNs. Copy the resulting role ARN to Vercel as `AWS_ROLE_ARN`.
 
-If the selected identifier is a cross-region inference profile, the policy must include `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` on the inference profile ARN plus the exact destination foundation-model ARNs listed by AWS for that profile. Keep the list exact and least-privilege; never use `Resource: "*"`.
+If the selected identifier is a cross-region inference profile and IAM/OIDC fallback is used, the policy must include `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` on the inference profile ARN plus the exact destination foundation-model ARNs listed by AWS for that profile. Keep the list exact and least-privilege; never use `Resource: "*"`.
 
 ## Verification
 

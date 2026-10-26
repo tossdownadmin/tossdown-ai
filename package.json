@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.901.0",
+    "@aws-sdk/token-providers": "^3.1156.0",
     "@upstash/ratelimit": "^2.0.6",
     "@upstash/redis": "^1.35.3",
     "@vercel/oidc-aws-credentials-provider": "^3.3.15",
