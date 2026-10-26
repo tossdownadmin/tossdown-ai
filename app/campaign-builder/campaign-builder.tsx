@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { campaignIdSummary } from "./id-summary";
 
 type Account = { id: string; name?: string; currency?: string };
 type Created = { campaignId?: string; adSetId?: string; imageHash?: string; creativeId?: string; adId?: string };
@@ -38,7 +39,7 @@ export default function CampaignBuilder() {
     event.preventDefault();
     if (fields.assetMode === "UPLOAD" && (!image || !["image/jpeg", "image/png"].includes(image.type) || image.size > 8 * 1024 * 1024)) { setError("Choose a JPEG or PNG image under 8 MB."); return; }
     if (fields.assetMode === "ACCOUNT_IMAGE" && !fields.accountImageHash || fields.assetMode === "EXISTING_CREATIVE" && !fields.existingCreativeId) { setError("Choose an asset from this ad account."); return; }
-    setBusy(true); setError(""); setDiagnostics(null); setCreated(null); setVerified(false); setAttempted(false);
+    setBusy(true); setError(""); setDiagnostics(null); setCreated(null); setReused(null); setVerified(false); setAttempted(false);
     try {
       const digest = image && fields.assetMode === "UPLOAD" ? await crypto.subtle.digest("SHA-256", await image.arrayBuffer()) : null;
       const imageDigest = digest ? Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("") : "";
@@ -63,7 +64,9 @@ export default function CampaignBuilder() {
   const selectedAssetId = fields.assetMode === "ACCOUNT_IMAGE" ? fields.accountImageHash : fields.existingCreativeId;
   const selectedAsset = assets.find(asset => asset.id === selectedAssetId);
   const visibleAssets = assets.filter(asset => `${asset.name} ${asset.id} ${asset.summary || ""}`.toLowerCase().includes(assetSearch.toLowerCase()));
+  const displayedIds = campaignIdSummary(fields, created);
   return <main className="campaign-shell"><div className="campaign-card full-builder"><p className="eyebrow">Meta Marketing API</p><h1>Create paused campaign package</h1><p className="intro">Create a campaign, ad set, and ad. An ad always needs a creative. You can reuse an account creative, reuse an account image in a new creative, or upload an image. All delivery objects are PAUSED—not unpublished Ads Manager drafts. Meta may retain earlier objects if a later step fails.</p>
+    <section className="id-summary" aria-labelledby="id-summary-title"><h2 id="id-summary-title">IDs used in this package</h2><p>Selected and created IDs appear here as you work. Tokens, secrets, and the one-time approval code are never shown.</p>{displayedIds.length ? <dl>{displayedIds.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl> : <p>Choose an ad account to begin.</p>}</section>
     {error && <div className="error" role="alert"><p>{error}</p>{diagnostics && <details open><summary>Safe Meta diagnostics</summary><dl>{Object.entries(diagnostics).filter(([, value]) => value !== undefined && value !== "").map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl></details>}</div>}
     {created && <section className={verified ? "success" : "partial"}><h2>{verified ? "All objects verified" : "Objects already created"}</h2><dl>{Object.entries(created).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{value}</dd></div>)}</dl>{reused && <><h3>Reused from account</h3><dl>{Object.entries(reused).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{value}</dd></div>)}</dl></>}{!verified && <p>Check these IDs in Ads Manager before starting another package.</p>}<button type="button" onClick={restart}>Start a new package</button></section>}
     {!verified && !approvalId && <form onSubmit={prepare}><h2>1. Campaign</h2><label>Search ad accounts<input value={search} onChange={event => setSearch(event.target.value)} placeholder="Name or account ID" /></label><label>Ad account<select required value={fields.accountId} onChange={event => update("accountId", event.target.value)} disabled={loading}><option value="">{loading ? "Loading…" : "Choose an account"}</option>{filtered.map(account => <option key={account.id} value={account.id}>{account.name || "Unnamed"} — {account.id}</option>)}</select></label>

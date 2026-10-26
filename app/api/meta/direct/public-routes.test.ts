@@ -19,13 +19,13 @@ import { PUBLIC_CAMPAIGN_BUILDER_ACTOR } from "../../../../lib/public-campaign-b
 describe("public campaign-builder routes", () => {
   beforeEach(() => {
     rate.mockReset().mockResolvedValue({ success: true });
-    readiness.mockReset().mockResolvedValue({ accounts: [{ id: "act_12345", name: "Account", currency: "CAD", tasks: ["MANAGE"] }], permissions: ["ads_management:granted"], tokenApp: { appId: "secret-diagnostic" } });
+    readiness.mockReset().mockResolvedValue({ accounts: [{ id: "act_12345", name: "Account", currency: "CAD", tasks: ["MANAGE"] }], permissions: ["ads_management:granted"], tokenApp: { appId: "123456789", userId: "987654321", accessToken: "secret-diagnostic" } });
     listAssets.mockReset().mockResolvedValue({ items: [] });
     prepare.mockReset().mockResolvedValue({ ok: true, approvalId: "123" });
     execute.mockReset().mockResolvedValue({ ok: true, verified: true });
   });
 
-  it("lists only form account fields without login or token diagnostics", async () => {
+  it("lists only form account fields without token diagnostics or login", async () => {
     const response = await status();
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ accounts: [{ id: "act_12345", name: "Account", currency: "CAD" }] });
