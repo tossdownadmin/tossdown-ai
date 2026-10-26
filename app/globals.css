@@ -25,3 +25,16 @@ code { font-size: .9em; }
 .markdown-table th { background: #f5f5f5; color: #404040; font-weight: 650; }
 .markdown-table th, .markdown-table td { border-bottom: 1px solid #e5e5e5; padding: .7rem .85rem; vertical-align: top; }
 .markdown-table tr:last-child td { border-bottom: 0; }
+.campaign-shell { min-height: 100vh; background: #f7f7f5; padding: 48px 20px; }
+.campaign-card { max-width: 720px; margin: 0 auto; background: #fff; border: 1px solid #e5e5e5; border-radius: 18px; padding: 36px; box-shadow: 0 16px 50px #1717170d; }
+.eyebrow { color: #e51451; font-size: .75rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; margin: 0 0 10px; }
+.campaign-card h1 { font-size: 2rem; margin: 0 0 10px; } .campaign-card h2 { margin-top: 0; }
+.intro { color: #525252; line-height: 1.55; margin-bottom: 28px; }
+.campaign-card label { display: block; color: #404040; font-size: .9rem; font-weight: 650; margin: 18px 0; }
+.campaign-card input, .campaign-card select { display: block; width: 100%; border: 1px solid #d4d4d4; border-radius: 9px; margin-top: 7px; padding: 11px 12px; background: #fff; }
+.campaign-card button { border: 0; border-radius: 9px; background: #171717; color: #fff; cursor: pointer; font-weight: 700; margin-top: 10px; padding: 12px 16px; } .campaign-card button:disabled { cursor: not-allowed; opacity: .45; }
+.campaign-card .secondary { background: #f5f5f5; color: #171717; margin-left: 8px; }
+.error { background: #fff1f2; border: 1px solid #fecdd3; border-radius: 9px; color: #9f1239; padding: 12px; margin: 18px 0; }
+.review, .success { border-top: 1px solid #e5e5e5; margin-top: 24px; padding-top: 24px; } .success { border: 1px solid #bbf7d0; background: #f0fdf4; border-radius: 12px; padding: 24px; }
+.campaign-card dl { display: grid; grid-template-columns: 160px 1fr; gap: 10px 16px; margin: 22px 0; } .campaign-card dt { color: #737373; } .campaign-card dd { margin: 0; font-weight: 650; word-break: break-word; }
+@media (max-width: 560px) { .campaign-card { padding: 24px; } .campaign-card dl { grid-template-columns: 1fr; gap: 4px; } .campaign-card dd { margin-bottom: 8px; } }

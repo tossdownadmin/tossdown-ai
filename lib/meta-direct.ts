@@ -10,6 +10,8 @@ const approvalKey = (user: string, id: string) => `meta:direct:campaign-approval
 const normalizeAccountId = (value: string) => value.trim().replace(/^act_/i, "");
 const allowedAccounts = () => new Set((process.env.META_WRITE_ACCOUNT_IDS || "").split(",").map(normalizeAccountId).filter(Boolean));
 const token = () => process.env.META_SYSTEM_USER_TOKEN || "";
+export const DIRECT_CAMPAIGN_OBJECTIVES = ["OUTCOME_AWARENESS", "OUTCOME_TRAFFIC", "OUTCOME_ENGAGEMENT", "OUTCOME_LEADS", "OUTCOME_SALES", "OUTCOME_APP_PROMOTION"] as const;
+export const DIRECT_SPECIAL_AD_CATEGORIES = ["HOUSING", "EMPLOYMENT", "CREDIT", "ISSUES_ELECTIONS_POLITICS", "ONLINE_GAMBLING_AND_GAMING", "FINANCIAL_PRODUCTS_SERVICES"] as const;
 
 export function directMetaConfiguration() {
   const missing: string[] = [];
@@ -25,8 +27,10 @@ export function validateDirectCampaignArgs(input: Record<string, unknown>) {
   if (!accountId) missing.push("accountId");
   if (!name) missing.push("name");
   if (!objective) missing.push("objective");
+  if (objective && !(DIRECT_CAMPAIGN_OBJECTIVES as readonly string[]).includes(objective)) missing.push("objective must be a supported campaign objective");
   if (!Array.isArray(input.specialAdCategories)) missing.push("specialAdCategories (required; use [] when no category applies)");
   if (Array.isArray(input.specialAdCategories) && categories.length !== input.specialAdCategories.length) missing.push("specialAdCategories must contain documented values");
+  if (categories.some(category => !(DIRECT_SPECIAL_AD_CATEGORIES as readonly string[]).includes(category))) missing.push("specialAdCategories must contain documented values");
   return { missing, args: { accountId, name, objective, specialAdCategories: categories } };
 }
 const objectiveMap: Record<string, string> = { awareness: "OUTCOME_AWARENESS", traffic: "OUTCOME_TRAFFIC", engagement: "OUTCOME_ENGAGEMENT", leads: "OUTCOME_LEADS", sales: "OUTCOME_SALES", "app promotion": "OUTCOME_APP_PROMOTION" };
@@ -45,8 +49,9 @@ export function parseCampaignRequest(text: string, accounts: Array<{ id: string;
   return { name, objective, specialAdCategories, accountMatches, missing };
 }
 function hash(args: Args) { return crypto.createHash("sha256").update(JSON.stringify(args)).digest("hex"); }
-class MetaGraphError extends Error { constructor(readonly status: number) { super("Meta Graph API request failed"); } }
-async function graph(path: string, init?: RequestInit) { const response = await fetch(`${GRAPH_BASE}${path}`, { ...init, headers: { Accept: "application/json", ...(init?.headers || {}), Authorization: `Bearer ${token()}` }, cache: "no-store" }); const payload = await response.json().catch(() => ({})); if (!response.ok) throw new MetaGraphError(response.status); return payload as Record<string, unknown>; }
+class MetaGraphError extends Error { constructor(readonly status: number, readonly code?: number, readonly type?: string) { super("Meta Graph API request failed"); } }
+async function graph(path: string, init?: RequestInit) { const response = await fetch(`${GRAPH_BASE}${path}`, { ...init, headers: { Accept: "application/json", ...(init?.headers || {}), Authorization: `Bearer ${token()}` }, cache: "no-store" }); const payload = await response.json().catch(() => ({})); if (!response.ok) { const error = payload && typeof payload === "object" && "error" in payload ? (payload as { error?: { code?: number; type?: string } }).error : undefined; throw new MetaGraphError(response.status, error?.code, error?.type); } return payload as Record<string, unknown>; }
+function sanitizedGraphError(error: unknown) { if (!(error instanceof MetaGraphError)) return "Meta API request failed. Try again or contact an administrator."; if (error.status === 401 || error.code === 190) return "Meta authorization failed. Reconnect or ask an administrator to check the system-user token."; if (error.status === 403) return "Meta denied this action. Confirm the token has ads_management access to this account."; if (error.status === 400) return "Meta rejected the campaign details. Check the account, objective, and special category selection."; return "Meta could not complete the request. Try again or contact an administrator."; }
 export async function directMetaReadiness() {
   const config = directMetaConfiguration();
   const emptyAccounts: Array<{ id: string; name?: string; account_status?: number }> = [];
@@ -76,11 +81,11 @@ export async function executeDirectCampaign(user: string, approvalId: string) {
   if (!approval || approval.user !== user || approval.expiresAt < Date.now() || hash(approval.args) !== approval.hash) return { ok: false as const, error: "Approval expired or invalid." };
   await deleteSecure(key);
   const body = new URLSearchParams({ name: approval.args.name, objective: approval.args.objective, special_ad_categories: JSON.stringify(approval.args.specialAdCategories), status: "PAUSED" });
-  const created = await graph(`/act_${encodeURIComponent(approval.args.accountId.replace(/^act_/, ""))}/campaigns`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+  let created: Record<string, unknown>; try { created = await graph(`/act_${encodeURIComponent(approval.args.accountId.replace(/^act_/, ""))}/campaigns`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body }); } catch (error) { return { ok: false as const, error: sanitizedGraphError(error) }; }
   const campaignId = typeof created.id === "string" ? created.id : "";
   if (!campaignId) return { ok: false as const, error: "Meta returned no campaign ID." };
-  const readback = await graph(`/${encodeURIComponent(campaignId)}?fields=id,name,objective,status,special_ad_categories`);
+  let readback: Record<string, unknown>; try { readback = await graph(`/${encodeURIComponent(campaignId)}?fields=id,name,objective,status,special_ad_categories`); } catch (error) { return { ok: false as const, error: `Campaign ${campaignId} was created, but Meta readback failed. ${sanitizedGraphError(error)}` }; }
   const state = typeof readback.status === "string" ? readback.status : "UNKNOWN";
   if (state !== "PAUSED") return { ok: false as const, error: "Campaign was created but did not verify as PAUSED." };
-  return { ok: true as const, verified: true, campaignId, state };
+  return { ok: true as const, verified: true, campaignId, state, accountId: approval.args.accountId, objective: typeof readback.objective === "string" ? readback.objective : approval.args.objective };
 }
