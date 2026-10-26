@@ -13,8 +13,7 @@ const token = () => process.env.META_SYSTEM_USER_TOKEN || "";
 export function directMetaConfiguration() {
   const missing: string[] = [];
   if (!token()) missing.push("META_SYSTEM_USER_TOKEN");
-  if (!process.env.META_WRITE_ACCOUNT_IDS) missing.push("META_WRITE_ACCOUNT_IDS");
-  return { configured: missing.length === 0, writeEnabled: process.env.META_WRITE_ENABLED === "true", missing };
+  return { configured: missing.length === 0, writeEnabled: process.env.META_WRITE_ENABLED === "true", tokenConfigured: Boolean(token()), missing };
 }
 export function validateDirectCampaignArgs(input: Record<string, unknown>) {
   const missing: string[] = [];
@@ -30,16 +29,16 @@ export function validateDirectCampaignArgs(input: Record<string, unknown>) {
   return { missing, args: { accountId, name, objective, specialAdCategories: categories } };
 }
 function hash(args: Args) { return crypto.createHash("sha256").update(JSON.stringify(args)).digest("hex"); }
-async function graph(path: string, init?: RequestInit) { const response = await fetch(`${GRAPH_BASE}${path}`, { ...init, headers: { Accept: "application/json", ...(init?.headers || {}), Authorization: `Bearer ${token()}` }, cache: "no-store" }); const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error("Meta Graph API request failed"); return payload as Record<string, unknown>; }
+class MetaGraphError extends Error { constructor(readonly status: number) { super("Meta Graph API request failed"); } }
+async function graph(path: string, init?: RequestInit) { const response = await fetch(`${GRAPH_BASE}${path}`, { ...init, headers: { Accept: "application/json", ...(init?.headers || {}), Authorization: `Bearer ${token()}` }, cache: "no-store" }); const payload = await response.json().catch(() => ({})); if (!response.ok) throw new MetaGraphError(response.status); return payload as Record<string, unknown>; }
 export async function directMetaReadiness() {
   const config = directMetaConfiguration();
-  if (!config.configured) return { ...config, tokenConfigured: false, permissionsChecked: false, permissions: [], accounts: [] as Array<{ id: string; name?: string; account_status?: number }> };
-  try {
-    const [permissionPayload, accountPayload] = await Promise.all([graph("/me/permissions"), graph("/me/adaccounts?fields=id,name,account_status&limit=100")]);
-    const permissions = Array.isArray(permissionPayload.data) ? permissionPayload.data.filter((item): item is { permission: string; status: string } => Boolean(item && typeof item === "object" && typeof (item as { permission?: unknown }).permission === "string" && typeof (item as { status?: unknown }).status === "string")).map(item => `${item.permission}:${item.status}`) : [];
-    const accounts = Array.isArray(accountPayload.data) ? accountPayload.data.filter((item): item is { id: string; name?: string; account_status?: number } => Boolean(item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string")).map(item => ({ id: item.id, name: item.name, account_status: item.account_status })) : [];
-    return { ...config, tokenConfigured: true, permissionsChecked: true, permissions, accounts, allowedAccounts: accounts.filter(account => allowedAccounts().has(account.id)).map(account => account.id) };
-  } catch { return { ...config, tokenConfigured: true, permissionsChecked: false, permissions: [] as string[], accounts: [] as Array<{ id: string; name?: string; account_status?: number }> }; }
+  const emptyAccounts: Array<{ id: string; name?: string; account_status?: number }> = [];
+  if (!config.configured) return { ...config, permissionsChecked: false, permissions: [] as string[], accounts: emptyAccounts, graphError: "missing_configuration" as const };
+  let permissions: string[] = []; let accounts = emptyAccounts; let permissionError = ""; let accountError = "";
+  try { const payload = await graph("/me/permissions"); permissions = Array.isArray(payload.data) ? payload.data.filter((item): item is { permission: string; status: string } => Boolean(item && typeof item === "object" && typeof (item as { permission?: unknown }).permission === "string" && typeof (item as { status?: unknown }).status === "string")).map(item => `${item.permission}:${item.status}`) : []; } catch (error) { permissionError = error instanceof MetaGraphError && error.status === 401 ? "permission_error" : "graph_api_error"; }
+  try { const payload = await graph("/me/adaccounts?fields=id,name,account_status&limit=100"); accounts = Array.isArray(payload.data) ? payload.data.filter((item): item is { id: string; name?: string; account_status?: number } => Boolean(item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string")).map(item => ({ id: item.id, name: item.name, account_status: item.account_status })) : []; } catch (error) { accountError = error instanceof MetaGraphError && error.status === 401 ? "permission_error" : "graph_api_error"; }
+  return { ...config, permissionsChecked: !permissionError, permissions, accounts, allowedAccounts: accounts.filter(account => allowedAccounts().has(account.id)).map(account => account.id), graphError: permissionError || accountError || null };
 }
 export async function prepareDirectCampaign(user: string, input: Record<string, unknown>) {
   const config = directMetaConfiguration();
