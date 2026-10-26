@@ -1,0 +1,34 @@
+import crypto from "node:crypto";
+import { auth as mcpAuth, type OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
+import { getSecure, putSecure, deleteSecure } from "./secure-store";
+
+export const META_MCP_URL = "https://mcp.facebook.com/ads";
+export const META_RESOURCE_METADATA_URL = "https://mcp.facebook.com/.well-known/oauth-protected-resource/ads";
+export const META_AUTHORIZATION_SERVER = "https://www.facebook.com/ads";
+export const META_SCOPES = "ads_management ads_read catalog_management business_management pages_show_list pages_manage_ads facebook_branded_content_ads_brand instagram_basic instagram_branded_content_ads_brand ads_mcp_management";
+type StoredState = { state: string; verifier: string; redirectUri: string };
+type StoredTokens = { access_token: string; refresh_token?: string; token_type: string; expires_in?: number; expires_at?: number; issuer?: string };
+const stateKey = (user: string) => `mcp:meta:oauth-state:${user}`;
+const tokenKey = (user: string) => `mcp:meta:tokens:${user}`;
+export function validateMetaOAuthState(stored: StoredState | null, returnedState: string, redirectUri: string) { return Boolean(stored && stored.state === returnedState && stored.redirectUri === redirectUri); }
+export function metaOAuthConfigured() { return Boolean(process.env.META_MCP_CLIENT_ID && process.env.MCP_TOKEN_ENCRYPTION_KEY && (!process.env.MCP_META_ADS_URL || process.env.MCP_META_ADS_URL === META_MCP_URL)); }
+export async function metaConnectionStatus(user: string) { const tokens = await getSecure<StoredTokens>(tokenKey(user)); return { configured: metaOAuthConfigured(), connected: Boolean(tokens?.access_token) }; }
+class Provider implements OAuthClientProvider {
+  authorizationUrl?: URL;
+  constructor(private readonly user: string, private readonly redirectUri: string) {}
+  get redirectUrl() { return this.redirectUri; }
+  get clientMetadata() { return { client_name: "tossdown AI", redirect_uris: [this.redirectUri], grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: "none", scope: META_SCOPES }; }
+  async clientInformation() { const clientId = process.env.META_MCP_CLIENT_ID; return clientId ? { client_id: clientId, issuer: META_AUTHORIZATION_SERVER, token_endpoint_auth_method: "none" as const } : undefined; }
+  async tokens() { return (await getSecure<StoredTokens>(tokenKey(this.user))) || undefined; }
+  async saveTokens(tokens: StoredTokens) { await putSecure(tokenKey(this.user), tokens, 60 * 60 * 24 * 60); }
+  async saveCodeVerifier(verifier: string) { const current = await getSecure<StoredState>(stateKey(this.user)); if (current) await putSecure(stateKey(this.user), { ...current, verifier }, 600); }
+  async codeVerifier() { const value = await getSecure<StoredState>(stateKey(this.user)); if (!value) throw new Error("OAuth state expired"); return value.verifier; }
+  async redirectToAuthorization(url: URL) { this.authorizationUrl = url; }
+  async state() { const value = await getSecure<StoredState>(stateKey(this.user)); if (!value) throw new Error("OAuth state expired"); return value.state; }
+}
+export async function startMetaOAuth(user: string, redirectUri: string) { if (!metaOAuthConfigured()) throw new Error("META_MCP_NOT_CONFIGURED"); const state = cryptoRandom(); await putSecure(stateKey(user), { state, verifier: "", redirectUri }, 600); const provider = new Provider(user, redirectUri); await mcpAuth(provider, { serverUrl: META_MCP_URL, resourceMetadataUrl: new URL(META_RESOURCE_METADATA_URL), scope: META_SCOPES }); if (!provider.authorizationUrl) throw new Error("META_OAUTH_URL_NOT_CREATED"); return { url: provider.authorizationUrl.toString(), state }; }
+export async function finishMetaOAuth(user: string, code: string, returnedState: string, redirectUri: string) { const stored = await getSecure<StoredState>(stateKey(user)); if (!validateMetaOAuthState(stored, returnedState, redirectUri)) throw new Error("META_OAUTH_STATE_INVALID"); const provider = new Provider(user, redirectUri); await putSecure(stateKey(user), stored, 600); await mcpAuth(provider, { serverUrl: META_MCP_URL, resourceMetadataUrl: new URL(META_RESOURCE_METADATA_URL), authorizationCode: code, scope: META_SCOPES }); await deleteSecure(stateKey(user)); }
+export async function disconnectMeta(user: string) { await deleteSecure(tokenKey(user)); }
+export async function metaAccessToken(user: string) { return (await getSecure<StoredTokens>(tokenKey(user)))?.access_token || null; }
+function cryptoRandom() { return Array.from(cryptoBytes(24), b => b.toString(16).padStart(2, "0")).join(""); }
+function cryptoBytes(length: number) { const bytes = new Uint8Array(length); if (typeof crypto.randomFillSync === "function") crypto.randomFillSync(bytes); return bytes; }

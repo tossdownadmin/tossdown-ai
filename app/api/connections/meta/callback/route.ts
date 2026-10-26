@@ -1,0 +1,4 @@
+import { auth } from "../../../../../auth";
+import { finishMetaOAuth } from "../../../../../lib/meta-oauth";
+export const runtime = "nodejs";
+export async function GET(request: Request) { const session = await auth(); if (!session?.user?.email?.toLowerCase().endsWith("@tossdown.com")) return new Response("Unauthorized", { status: 401 }); const url = new URL(request.url); const code = url.searchParams.get("code"); const state = url.searchParams.get("state"); if (!code || !state) return new Response("Missing OAuth callback parameters", { status: 400 }); try { await finishMetaOAuth(session.user.email.toLowerCase(), code, state, `${url.origin}/api/connections/meta/callback`); return Response.redirect(new URL("/?meta=connected", url.origin)); } catch { return new Response("Meta authorization failed. Please try again.", { status: 502 }); } }

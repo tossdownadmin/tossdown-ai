@@ -1,0 +1,4 @@
+import { auth } from "../../../../../auth";
+import { metaOAuthConfigured, startMetaOAuth } from "../../../../../lib/meta-oauth";
+export const runtime = "nodejs";
+export async function GET(request: Request) { const session = await auth(); if (!session?.user?.email?.toLowerCase().endsWith("@tossdown.com")) return Response.json({ error: "Sign in with a verified tossdown.com account." }, { status: 401 }); if (!metaOAuthConfigured()) return Response.json({ error: "Meta MCP OAuth is not configured." }, { status: 503 }); const url = new URL(request.url); const redirectUri = `${url.origin}/api/connections/meta/callback`; try { const result = await startMetaOAuth(session.user.email.toLowerCase(), redirectUri); return Response.redirect(result.url); } catch { return Response.json({ error: "Meta authorization could not be started." }, { status: 502 }); } }
