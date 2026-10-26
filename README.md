@@ -1,6 +1,6 @@
 # tossdown AI
 
-Internal marketing chat. This version is publicly reachable and does not require Google sign-in. The MVP uses Next.js App Router, Amazon Bedrock ConverseStream, Upstash Redis rate limiting, and Vercel OIDC for short-lived AWS credentials.
+Internal marketing chat with optional server-side MCP connections. MCP is disabled by default. The app uses Next.js App Router, Amazon Bedrock ConverseStream, Upstash Redis rate limiting, Vercel OIDC for short-lived AWS credentials, and the official MCP TypeScript SDK with Streamable HTTP transport.
 
 Google sign-in was removed at the request of the owner. It previously restricted access to verified `@tossdown.com` employees. Without it, anyone who can reach the deployment may use the app; keep the deployment private or add an organization-approved access layer before sharing it broadly. Do not send confidential information.
 
@@ -20,6 +20,14 @@ Google sign-in was removed at the request of the owner. It previously restricted
 - `AWS_ROLE_ARN`: the IAM role created below; only needed for Vercel OIDC. Local development uses the standard AWS SDK credential chain if this is omitted.
 
 When `AWS_BEARER_TOKEN_BEDROCK` is empty or absent, the app falls back to the existing `AWS_ROLE_ARN` Vercel OIDC configuration, or the standard AWS credential chain locally. The token is only read server-side by the Bedrock client and is never sent to the browser.
+
+## MCP connections
+
+Set `MCP_ENABLED=true` only after real Streamable HTTP endpoints and credentials are available. Configure `MCP_GOOGLE_ADS_URL`/`MCP_META_ADS_URL` and their server-only tokens, plus comma-separated `MCP_*_READ_TOOLS` names. A tool is usable only when its exact name is explicitly allowlisted and the MCP server marks it with `annotations.readOnlyHint=true`; write tools and unannotated tools are rejected. Tool names are namespaced as `google_ads__toolName` or `meta_ads__toolName`.
+
+When MCP is enabled, `MCP_REQUIRE_AUTH=true` requires Auth.js Google login and a verified `@tossdown.com` account for chat and connection settings. Configure `AUTH_SECRET`, `AUTH_GOOGLE_ID`, and `AUTH_GOOGLE_SECRET`; add the deployed `/api/auth/callback/google` URL to the Google OAuth client. If MCP is disabled or an endpoint/allowlist/token is incomplete, the UI shows `Not configured` and no connection attempt is made. Do not put MCP URLs or credentials in chat requests.
+
+`BEDROCK_MODEL_IDS` is an optional comma-separated server-side allowlist. `BEDROCK_MODEL_ID` is always the default and is always allowed; client-supplied model IDs outside this list are rejected.
 
 ## Vercel and GitHub
 

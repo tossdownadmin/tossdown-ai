@@ -1,2 +1,3 @@
 import Chat from "../components/chat";
-export default function Page(){return <Chat/>}
+import { SessionProvider } from "next-auth/react";
+export default function Page(){return <SessionProvider><Chat/></SessionProvider>}

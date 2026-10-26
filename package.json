@@ -13,10 +13,12 @@
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.901.0",
     "@aws-sdk/token-providers": "^3.1156.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@upstash/ratelimit": "^2.0.6",
     "@upstash/redis": "^1.35.3",
     "@vercel/oidc-aws-credentials-provider": "^3.3.15",
     "next": "^15.5.6",
+    "next-auth": "^5.0.0-beta.29",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
