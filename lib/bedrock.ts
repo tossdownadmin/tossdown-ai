@@ -10,6 +10,15 @@ const client = () => { const region = process.env.AWS_REGION || "eu-north-1"; co
 type InputMessage = { role: "user" | "assistant"; content: string };
 export type BedrockEvent = { type: "text"; text: string } | { type: "tool_start"; name: string } | { type: "tool_result"; name: string; ok: boolean };
 export type SafeToolResult = { toolResult: { toolUseId: string; status?: "success" | "error"; content: Array<{ text: string } | { json: unknown }> } };
+export function parseToolUseInput(input: string | undefined) { if (!input) return {}; const parsed = JSON.parse(input); return parsed && typeof parsed === "object" ? parsed : {}; }
+export function structuralDiagnostics(conversation: Array<{ role: string; content?: Array<Record<string, unknown>> }>) {
+  const blocks = conversation.flatMap(message => (message.content || []).map(block => ({ role: message.role, type: Object.keys(block)[0] || "unknown", toolUseId: typeof (block.toolUse as { toolUseId?: unknown } | undefined)?.toolUseId === "string" ? "present" : "missing", toolResultId: typeof (block.toolResult as { toolUseId?: unknown } | undefined)?.toolUseId === "string" ? "present" : "missing" })));
+  const toolUses = blocks.filter(block => block.type === "toolUse");
+  const toolResults = blocks.filter(block => block.type === "toolResult");
+  const useIds = new Set(conversation.flatMap(message => (message.content || []).map(block => (block.toolUse as { toolUseId?: unknown } | undefined)?.toolUseId).filter((id): id is string => typeof id === "string")));
+  const resultIds = new Set(conversation.flatMap(message => (message.content || []).map(block => (block.toolResult as { toolUseId?: unknown } | undefined)?.toolUseId).filter((id): id is string => typeof id === "string")));
+  return { roles: [...new Set(conversation.map(message => message.role))], blockTypes: [...new Set(blocks.map(block => block.type))], blockCount: blocks.length, toolUseCount: toolUses.length, toolResultCount: toolResults.length, toolUseIdsPresent: toolUses.every(block => block.toolUseId === "present"), toolResultIdsPresent: toolResults.every(block => block.toolResultId === "present"), toolUseToolResultCountsMatch: toolUses.length === toolResults.length, toolUseResultIdsMatch: useIds.size === resultIds.size && [...useIds].every(id => resultIds.has(id)) };
+}
 export function toBedrockToolResult(toolUseId: string, result: { isError?: boolean; content?: Array<{ type?: string; text?: string; json?: unknown }> }): SafeToolResult {
   const content: Array<{ text: string } | { json: unknown }> = [];
   for (const item of result.content || []) {
@@ -24,7 +33,8 @@ export async function* runBedrock(messages: InputMessage[], modelId: string, too
   const toolDefinitions = tools.map(t => ({ toolSpec: { name: t.name, description: t.description || `Read-only ${t.connection} data`, inputSchema: { json: t.inputSchema } } }));
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     const input: ConverseStreamCommandInput = { modelId, system: [{ text: system }], messages: conversation, inferenceConfig: { maxTokens: LIMITS.maxOutputTokens, temperature: 0.4 }, ...(toolDefinitions.length ? { toolConfig: { tools: toolDefinitions } as any } : {}) };
-    const output = await client().send(new ConverseStreamCommand(input));
+    let output;
+    try { output = await client().send(new ConverseStreamCommand(input)); } catch (error) { throw Object.assign(error instanceof Error ? error : new Error("Bedrock request failed"), { diagnostics: structuralDiagnostics(conversation) }); }
     const blocks: any[] = []; let stopReason = "";
     for await (const event of output.stream ?? []) {
       const index = event.contentBlockStart?.contentBlockIndex ?? event.contentBlockDelta?.contentBlockIndex;
@@ -37,7 +47,8 @@ export async function* runBedrock(messages: InputMessage[], modelId: string, too
     }
     const content = blocks.filter(Boolean);
     if (stopReason !== "tool_use" || !content.some(b => b.toolUse)) return;
-    conversation.push({ role: "assistant", content });
+    const normalizedContent = content.map(block => block.toolUse ? { toolUse: { ...block.toolUse, input: parseToolUseInput(block.toolUse.input) } } : block);
+    conversation.push({ role: "assistant", content: normalizedContent });
     const results: any[] = [];
     for (const block of content) if (block.toolUse) {
       const tool = tools.find(t => t.name === block.toolUse.name); if (!tool) { results.push({ toolResult: { toolUseId: block.toolUse.toolUseId, status: "error", content: [{ text: "Tool is not allowlisted." }] } }); continue; }

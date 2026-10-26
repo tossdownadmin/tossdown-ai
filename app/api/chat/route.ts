@@ -10,7 +10,7 @@ import { isAllowedEmployeeEmail } from "../../../lib/access";
 import crypto from "node:crypto";
 
 export const runtime = "nodejs";
-function logFailure(requestId: string, stage: string, error: unknown) { const code = error instanceof Error && error.name ? error.name : "UnknownError"; console.error(JSON.stringify({ requestId, stage, error: code })); }
+function logFailure(requestId: string, stage: string, error: unknown) { const aws = error as { name?: unknown; message?: unknown; $metadata?: { requestId?: unknown; httpStatusCode?: unknown }; diagnostics?: unknown }; const message = typeof aws.message === "string" ? aws.message.replace(/(bearer|token|secret|password|credential)[^\s:=]*\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]").replace(/("[^"\n]{1,300}"|'[^'\n]{1,300}')/g, "[redacted]").slice(0, 300) : "Unknown error"; console.error(JSON.stringify({ requestId, stage, error: typeof aws.name === "string" ? aws.name : "UnknownError", message, awsRequestId: typeof aws.$metadata?.requestId === "string" ? aws.$metadata.requestId : undefined, httpStatus: typeof aws.$metadata?.httpStatusCode === "number" ? aws.$metadata.httpStatusCode : undefined, diagnostics: aws.diagnostics })); }
 function limiter() { const config = getRedisConfig(); if (!config) return null; return new Ratelimit({ redis: new Redis(config), limiter: Ratelimit.slidingWindow(20, "1 h"), analytics: true }); }
 export async function POST(request: Request) {
   const requestId = crypto.randomUUID();
