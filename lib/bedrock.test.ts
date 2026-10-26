@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { parseToolUseInput, structuralDiagnostics, toBedrockToolResult } from "./bedrock";
+import { describe, expect, it, vi } from "vitest";
+import * as metaDirect from "./meta-direct";
+import { campaignProposalEvent, directMetaToolDefinitions, dispatchDirectMetaTool, parseToolUseInput, structuralDiagnostics, toBedrockToolResult } from "./bedrock";
 
 describe("Bedrock tool-result continuation", () => {
   it("preserves the matching toolUseId and converts successful MCP content", () => {
@@ -16,5 +17,16 @@ describe("Bedrock tool-result continuation", () => {
   it("parses streamed tool input and diagnoses structural pairing without values", () => {
     expect(parseToolUseInput('{"customer_id":"123"}')).toEqual({ customer_id: "123" });
     expect(structuralDiagnostics([{ role: "assistant", content: [{ toolUse: { toolUseId: "u1" } }] }, { role: "user", content: [{ toolResult: { toolUseId: "u1" } }] }])).toMatchObject({ toolUseCount: 1, toolResultCount: 1, toolUseIdsPresent: true, toolResultIdsPresent: true, toolUseToolResultCountsMatch: true, toolUseResultIdsMatch: true });
+  });
+
+  it("dispatches the direct preparation tool and emits an approval proposal event", async () => {
+    const proposal = { ok: true as const, approvalId: "00000000-0000-0000-0000-000000000001" as `${string}-${string}-${string}-${string}-${string}`, expiresInSeconds: 300, args: { accountId: "780400040884747", name: "Test Campaign", objective: "OUTCOME_SALES", specialAdCategories: [] as string[] } };
+    const prepare = vi.spyOn(metaDirect, "prepareDirectCampaign").mockResolvedValue(proposal);
+    const tool = directMetaToolDefinitions("employee@tossdown.com").find(candidate => candidate.name === "meta_prepare_campaign");
+    expect(tool).toBeDefined();
+    const result = await dispatchDirectMetaTool(tool!, proposal.args);
+    expect(prepare).toHaveBeenCalledWith("employee@tossdown.com", proposal.args);
+    expect(campaignProposalEvent(result as typeof proposal)).toMatchObject({ type: "campaign_proposal", status: "awaiting_approval", approvalId: proposal.approvalId, args: proposal.args });
+    prepare.mockRestore();
   });
 });

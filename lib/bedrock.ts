@@ -3,12 +3,18 @@ import { fromStatic } from "@aws-sdk/token-providers";
 import { awsCredentialsProvider } from "@vercel/oidc-aws-credentials-provider";
 import { LIMITS } from "./limits";
 import { callTool, type McpTool } from "./mcp";
+import { directMetaReadiness, prepareDirectCampaign } from "./meta-direct";
 
 const system = "You are tossdown AI, an internal marketing assistant for tossdown employees. Be practical, clear, and honest. Help with ads, creative briefs, plans, and analysis. Do not claim access to live campaign data unless it is provided in the conversation. Keep recommendations concise and structured.";
 const MAX_TURNS = 4;
 const client = () => { const region = process.env.AWS_REGION || "eu-north-1"; const bearerToken = process.env.AWS_BEARER_TOKEN_BEDROCK; if (bearerToken) return new BedrockRuntimeClient({ region, token: fromStatic({ token: { token: bearerToken } }) }); return new BedrockRuntimeClient({ region, ...(process.env.AWS_ROLE_ARN ? { credentials: awsCredentialsProvider({ roleArn: process.env.AWS_ROLE_ARN }) } : {}) }); };
 type InputMessage = { role: "user" | "assistant"; content: string };
-export type BedrockEvent = { type: "text"; text: string } | { type: "tool_start"; name: string } | { type: "tool_result"; name: string; ok: boolean };
+export type BedrockEvent = { type: "text"; text: string } | { type: "tool_start"; name: string } | { type: "tool_result"; name: string; ok: boolean } | { type: "campaign_proposal"; status: "awaiting_approval" | "needs_details"; approvalId?: string; expiresInSeconds?: number; args?: Record<string, unknown>; missing?: string[]; accounts?: Array<{ id: string; name?: string }> };
+export type ServerTool = { name: string; description: string; inputSchema: Record<string, unknown>; kind: "direct_meta"; user: string };
+export type BedrockTool = McpTool | ServerTool;
+export function directMetaToolDefinitions(user: string): ServerTool[] { return [{ name: "meta_list_ad_accounts", description: "List the authenticated server token's accessible Meta ad accounts. Read-only; never creates or changes anything.", inputSchema: { type: "object", properties: {} }, kind: "direct_meta", user }, { name: "meta_prepare_campaign", description: "Prepare a proposed PAUSED Meta campaign after resolving an accessible account and exact campaign settings. This only creates an expiring approval proposal; it cannot approve or execute a campaign.", inputSchema: { type: "object", properties: { accountId: { type: "string" }, name: { type: "string" }, objective: { type: "string", description: "Valid Meta OUTCOME_* objective" }, specialAdCategories: { type: "array", items: { type: "string" }, description: "Use [] when no special category applies" } }, required: ["accountId", "name", "objective", "specialAdCategories"] }, kind: "direct_meta", user }]; }
+export async function dispatchDirectMetaTool(tool: ServerTool, args: Record<string, unknown>) { return tool.name === "meta_list_ad_accounts" ? directMetaReadiness() : prepareDirectCampaign(tool.user, args); }
+export function campaignProposalEvent(result: Awaited<ReturnType<typeof prepareDirectCampaign>>): BedrockEvent { return result.ok ? { type: "campaign_proposal", status: "awaiting_approval", approvalId: result.approvalId, expiresInSeconds: result.expiresInSeconds, args: result.args } : { type: "campaign_proposal", status: "needs_details", missing: result.missing }; }
 export type SafeToolResult = { toolResult: { toolUseId: string; status?: "success" | "error"; content: Array<{ text: string } | { json: unknown }> } };
 export function parseToolUseInput(input: string | undefined) { if (!input) return {}; const parsed = JSON.parse(input); return parsed && typeof parsed === "object" ? parsed : {}; }
 export function structuralDiagnostics(conversation: Array<{ role: string; content?: Array<Record<string, unknown>> }>) {
@@ -28,9 +34,9 @@ export function toBedrockToolResult(toolUseId: string, result: { isError?: boole
   }
   return { toolResult: { toolUseId, status: result.isError ? "error" : "success", content: content.length ? content : [{ text: result.isError ? "Tool reported an error." : "Tool returned no data." }] } };
 }
-export async function* runBedrock(messages: InputMessage[], modelId: string, tools: McpTool[]): AsyncGenerator<BedrockEvent> {
+export async function* runBedrock(messages: InputMessage[], modelId: string, tools: BedrockTool[]): AsyncGenerator<BedrockEvent> {
   const conversation: any[] = messages.map(m => ({ role: m.role, content: [{ text: m.content }] }));
-  const toolDefinitions = tools.map(t => ({ toolSpec: { name: t.name, description: t.description || `Read-only ${t.connection} data`, inputSchema: { json: t.inputSchema } } }));
+  const toolDefinitions = tools.map(t => ({ toolSpec: { name: t.name, description: t.description || `Read-only ${t.name} data`, inputSchema: { json: t.inputSchema } } }));
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     const input: ConverseStreamCommandInput = { modelId, system: [{ text: system }], messages: conversation, inferenceConfig: { maxTokens: LIMITS.maxOutputTokens, temperature: 0.4 }, ...(toolDefinitions.length ? { toolConfig: { tools: toolDefinitions } as any } : {}) };
     let output;
@@ -53,7 +59,7 @@ export async function* runBedrock(messages: InputMessage[], modelId: string, too
     for (const block of content) if (block.toolUse) {
       const tool = tools.find(t => t.name === block.toolUse.name); if (!tool) { results.push({ toolResult: { toolUseId: block.toolUse.toolUseId, status: "error", content: [{ text: "Tool is not allowlisted." }] } }); continue; }
       yield { type: "tool_start", name: tool.name };
-      try { const args = block.toolUse.input ? JSON.parse(block.toolUse.input) : {}; const result = await callTool(tool, args); const safeResult = result as unknown as { isError?: boolean; content?: Array<{ type?: string; text?: string; json?: unknown }> }; results.push(toBedrockToolResult(block.toolUse.toolUseId, safeResult)); yield { type: "tool_result", name: tool.name, ok: safeResult.isError !== true }; } catch { results.push({ toolResult: { toolUseId: block.toolUse.toolUseId, status: "error", content: [{ text: "Tool request failed or timed out." }] } }); yield { type: "tool_result", name: tool.name, ok: false }; }
+      try { const args = block.toolUse.input ? JSON.parse(block.toolUse.input) : {}; if ("kind" in tool && tool.kind === "direct_meta") { const directResult = await dispatchDirectMetaTool(tool, args); const failed = "ok" in directResult && directResult.ok === false; const safeText = JSON.stringify(directResult); results.push({ toolResult: { toolUseId: block.toolUse.toolUseId, status: failed ? "error" : "success", content: [{ text: safeText }] } }); if (tool.name === "meta_prepare_campaign") yield campaignProposalEvent(directResult as Awaited<ReturnType<typeof prepareDirectCampaign>>); yield { type: "tool_result", name: tool.name, ok: !failed }; } else { const result = await callTool(tool as McpTool, args); const safeResult = result as unknown as { isError?: boolean; content?: Array<{ type?: string; text?: string; json?: unknown }> }; results.push(toBedrockToolResult(block.toolUse.toolUseId, safeResult)); yield { type: "tool_result", name: tool.name, ok: safeResult.isError !== true }; } } catch { results.push({ toolResult: { toolUseId: block.toolUse.toolUseId, status: "error", content: [{ text: "Tool request failed or timed out." }] } }); yield { type: "tool_result", name: tool.name, ok: false }; }
     }
     conversation.push({ role: "user", content: results });
   }
