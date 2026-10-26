@@ -12,7 +12,7 @@ Each object is created server-side through the direct Meta Marketing API using `
 
 1. Select an accessible ad account.
 2. Enter campaign name, objective, and special category.
-3. Enter ad set name, daily budget in minor currency units, country, and age range. Traffic uses link-click optimization; Sales uses Purchase conversion optimization and requires a Pixel ID.
+3. Enter ad set name, daily budget in the account's normal currency amount (for example, 4.00 CAD), country, and age range. Traffic uses link-click optimization; Sales uses Purchase conversion optimization and requires a Pixel ID.
 4. Enter creative name, Facebook Page ID, primary text, headline, CTA, destination URL, and upload a JPEG or PNG image.
 5. Review the complete package and its enforced paused states.
 6. Confirm once.
@@ -44,7 +44,7 @@ Readback verifies IDs, relationships, and paused/configured status before succes
 - Country and age range are explicit. Other targeting and placement controls use Meta defaults.
 - Image upload is the creative path. Direct video upload is deferred.
 - Facebook Page ID and optional Instagram actor ID are entered manually.
-- Budget is entered as an integer in the ad account's minor currency units; account currency is read from Meta.
+- Budget is entered as a major currency amount. The server reads the selected account's currency from Meta, validates its decimal precision, and converts to integer minor units before approval. The trusted converted amount is included in the single-use approval. Meta's actual minimum budget still applies.
 
 ## Test plan
 

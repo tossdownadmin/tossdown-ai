@@ -16,7 +16,7 @@ const objectId = (data: Record<string, unknown>) => typeof data.id === "string" 
 
 export type FullInput = {
   accountId: string; name: string; objective: "OUTCOME_TRAFFIC" | "OUTCOME_SALES"; specialAdCategories: string[];
-  adSetName: string; dailyBudget: string; country: string; ageMin: number; ageMax: number; pixelId: string;
+  adSetName: string; dailyBudget: string; dailyBudgetMinor: string; currency: string; country: string; ageMin: number; ageMax: number; pixelId: string;
   creativeName: string; adName: string; pageId: string; instagramActorId: string;
   primaryText: string; headline: string; description: string; destinationUrl: string; callToAction: "LEARN_MORE" | "SHOP_NOW" | "SIGN_UP";
   imageDigest: string; imageSize: number; imageType: "image/jpeg" | "image/png";
@@ -24,13 +24,27 @@ export type FullInput = {
 type Approval = { user: string; args: FullInput; digest: string; expiresAt: number };
 type Created = { campaignId?: string; adSetId?: string; imageHash?: string; creativeId?: string; adId?: string };
 
+export function budgetToMinorUnits(amount: string, currency: string): string {
+  if (!/^(?:0|[1-9]\d{0,8})(?:\.\d{1,3})?$/.test(amount)) throw new Error("Enter a positive daily budget in the account currency, such as 4.00.");
+  if (!/^[A-Z]{3}$/.test(currency)) throw new Error("The ad account currency is unavailable. Refresh the account list before continuing.");
+  let digits = -1;
+  try { digits = new Intl.NumberFormat("en", { style: "currency", currency }).resolvedOptions().maximumFractionDigits ?? -1; }
+  catch { throw new Error("The ad account currency is unsupported. Refresh the account list before continuing."); }
+  if (digits < 0) throw new Error("The ad account currency precision is unavailable. Refresh the account list before continuing.");
+  const [whole, fraction = ""] = amount.split(".");
+  if (fraction.length > digits) throw new Error(`Enter no more than ${digits} decimal place${digits === 1 ? "" : "s"} for ${currency}.`);
+  const units = Number(whole) * 10 ** digits + Number(fraction.padEnd(digits, "0") || "0");
+  if (!Number.isSafeInteger(units) || units <= 0 || units > 1_000_000_000) throw new Error("Daily budget must be positive and no more than 1 billion minor currency units.");
+  return units.toString();
+}
+
 export function validateFullInput(input: Record<string, unknown>) {
   const campaign = validateDirectCampaignArgs(input);
   const issues = [...campaign.missing];
   const objective = campaign.args.objective;
   if (objective !== "OUTCOME_TRAFFIC" && objective !== "OUTCOME_SALES") issues.push("Full ads currently support Traffic or Sales objectives.");
   const dailyBudget = text(input.dailyBudget, 12);
-  if (!/^\d+$/.test(dailyBudget) || !Number.isSafeInteger(Number(dailyBudget)) || Number(dailyBudget) <= 0 || Number(dailyBudget) > 1_000_000_000) issues.push("Daily budget must be a positive amount in the ad account's minor currency units, up to 1 billion units.");
+  if (!/^(?:0|[1-9]\d{0,8})(?:\.\d{1,3})?$/.test(dailyBudget) || Number(dailyBudget) <= 0) issues.push("Enter a positive daily budget in the account currency, such as 4.00.");
   const country = text(input.country, 2).toUpperCase();
   if (!/^[A-Z]{2}$/.test(country)) issues.push("Choose a two-letter country code.");
   const ageMin = Number(input.ageMin), ageMax = Number(input.ageMax);
@@ -52,7 +66,7 @@ export function validateFullInput(input: Record<string, unknown>) {
   if (imageType !== "image/jpeg" && imageType !== "image/png") issues.push("Image must be JPEG or PNG.");
   const args = {
     accountId: campaign.args.accountId, name: campaign.args.name, objective: objective as FullInput["objective"], specialAdCategories: campaign.args.specialAdCategories,
-    adSetName: text(input.adSetName), dailyBudget, country, ageMin, ageMax, pixelId,
+    adSetName: text(input.adSetName), dailyBudget, dailyBudgetMinor: "", currency: "", country, ageMin, ageMax, pixelId,
     creativeName: text(input.creativeName), adName: text(input.adName), pageId, instagramActorId,
     primaryText: text(input.primaryText, 2000), headline: text(input.headline), description: text(input.description), destinationUrl: url,
     callToAction: callToAction as FullInput["callToAction"], imageDigest, imageSize, imageType: imageType as FullInput["imageType"],
@@ -62,7 +76,8 @@ export function validateFullInput(input: Record<string, unknown>) {
 }
 
 export function adSetPayload(args: FullInput, campaignId: string) {
-  const body = new URLSearchParams({ name: args.adSetName, campaign_id: campaignId, daily_budget: args.dailyBudget, billing_event: "IMPRESSIONS", optimization_goal: args.objective === "OUTCOME_SALES" ? "OFFSITE_CONVERSIONS" : "LINK_CLICKS", bid_strategy: "LOWEST_COST_WITHOUT_CAP", targeting: JSON.stringify({ geo_locations: { countries: [args.country] }, age_min: args.ageMin, age_max: args.ageMax }), status: "PAUSED" });
+  if (!/^\d+$/.test(args.dailyBudgetMinor) || args.dailyBudgetMinor === "0") throw new Error("Budget conversion is missing; review the package again.");
+  const body = new URLSearchParams({ name: args.adSetName, campaign_id: campaignId, daily_budget: args.dailyBudgetMinor, billing_event: "IMPRESSIONS", optimization_goal: args.objective === "OUTCOME_SALES" ? "OFFSITE_CONVERSIONS" : "LINK_CLICKS", bid_strategy: "LOWEST_COST_WITHOUT_CAP", targeting: JSON.stringify({ geo_locations: { countries: [args.country] }, age_min: args.ageMin, age_max: args.ageMax }), status: "PAUSED" });
   if (args.objective === "OUTCOME_SALES") body.set("promoted_object", JSON.stringify({ pixel_id: args.pixelId, custom_event_type: "PURCHASE" }));
   return body;
 }
@@ -81,7 +96,10 @@ export async function prepareFullPackage(user: string, input: Record<string, unk
   const allowed = (process.env.META_WRITE_ACCOUNT_IDS || "").split(",").map(value => value.trim().replace(/^act_/i, "")).filter(Boolean);
   if (allowed.length && !allowed.includes(args.accountId.replace(/^act_/i, ""))) return { ok: false as const, error: "Account is not on the write allowlist." };
   const readiness = await directMetaReadiness();
-  if (readiness.graphError || !readiness.permissions.includes("ads_management:granted") || !readiness.accounts.some(account => account.id.replace(/^act_/i, "") === args.accountId.replace(/^act_/i, ""))) return { ok: false as const, error: "Token lacks access to the selected account or ads_management permission." };
+  const account = readiness.accounts.find(item => item.id.replace(/^act_/i, "") === args.accountId.replace(/^act_/i, ""));
+  if (readiness.graphError || !readiness.permissions.includes("ads_management:granted") || !account) return { ok: false as const, error: "Token lacks access to the selected account or ads_management permission." };
+  try { args.dailyBudgetMinor = budgetToMinorUnits(args.dailyBudget, account.currency || ""); args.currency = account.currency || ""; }
+  catch (error) { return { ok: false as const, error: error instanceof Error ? error.message : "Invalid daily budget." }; }
   const approvalId = crypto.randomUUID();
   const digest = crypto.createHash("sha256").update(JSON.stringify(args)).digest("hex");
   await putSecure(key(user, approvalId), { user, args, digest, expiresAt: Date.now() + TTL * 1000 } satisfies Approval, TTL);
@@ -96,6 +114,9 @@ export function validateImage(file: File, bytes: Buffer, args: FullInput) {
 export async function executeFullPackage(user: string, approvalId: string, file: File) {
   const approval = await getSecure<Approval>(key(user, approvalId));
   if (!approval || approval.user !== user || approval.expiresAt < Date.now() || crypto.createHash("sha256").update(JSON.stringify(approval.args)).digest("hex") !== approval.digest) return { ok: false as const, error: "Approval expired or invalid." };
+  try {
+    if (!approval.args.dailyBudgetMinor || approval.args.dailyBudgetMinor !== budgetToMinorUnits(approval.args.dailyBudget, approval.args.currency)) return { ok: false as const, error: "Budget approval is invalid. Review the package again." };
+  } catch { return { ok: false as const, error: "Budget approval is invalid. Review the package again." }; }
   if (file.size > MAX_IMAGE_BYTES) return { ok: false as const, error: "Image exceeds 8 MB." };
   const bytes = Buffer.from(await file.arrayBuffer());
   if (!validateImage(file, bytes, approval.args)) return { ok: false as const, error: "Image changed since review. Review the package again." };
