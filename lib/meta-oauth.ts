@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { auth as mcpAuth, type OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import { getSecure, putSecure, deleteSecure } from "./secure-store";
+import { getRedisConfig } from "./redis";
 
 export const META_MCP_URL = "https://mcp.facebook.com/ads";
 export const META_RESOURCE_METADATA_URL = "https://mcp.facebook.com/.well-known/oauth-protected-resource/ads";
@@ -11,8 +12,19 @@ type StoredTokens = { access_token: string; refresh_token?: string; token_type: 
 const stateKey = (user: string) => `mcp:meta:oauth-state:${user}`;
 const tokenKey = (user: string) => `mcp:meta:tokens:${user}`;
 export function validateMetaOAuthState(stored: StoredState | null, returnedState: string, redirectUri: string) { return Boolean(stored && stored.state === returnedState && stored.redirectUri === redirectUri); }
-export function metaOAuthConfigured() { return Boolean(process.env.META_MCP_CLIENT_ID && process.env.MCP_TOKEN_ENCRYPTION_KEY && (!process.env.MCP_META_ADS_URL || process.env.MCP_META_ADS_URL === META_MCP_URL)); }
-export async function metaConnectionStatus(user: string) { const tokens = await getSecure<StoredTokens>(tokenKey(user)); return { configured: metaOAuthConfigured(), connected: Boolean(tokens?.access_token) }; }
+export function metaOAuthConfigured() { return metaOAuthConfiguration().configured; }
+export function metaOAuthConfiguration() {
+  const missing: string[] = [];
+  if (process.env.MCP_ENABLED !== "true") missing.push("MCP_ENABLED=true");
+  if (process.env.MCP_REQUIRE_AUTH !== "true") missing.push("MCP_REQUIRE_AUTH=true");
+  if (!process.env.META_MCP_CLIENT_ID) missing.push("META_MCP_CLIENT_ID");
+  if (!process.env.MCP_TOKEN_ENCRYPTION_KEY) missing.push("MCP_TOKEN_ENCRYPTION_KEY");
+  if (!(process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL)) missing.push("UPSTASH_REDIS_REST_URL or KV_REST_API_URL");
+  if (!(process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN)) missing.push("UPSTASH_REDIS_REST_TOKEN or KV_REST_API_TOKEN");
+  if (process.env.MCP_META_ADS_URL && process.env.MCP_META_ADS_URL !== META_MCP_URL) missing.push("MCP_META_ADS_URL (must be the official Meta MCP URL)");
+  return { configured: missing.length === 0, missing: [...new Set(missing)] };
+}
+export async function metaConnectionStatus(user: string) { const configuration = metaOAuthConfiguration(); const tokens = configuration.configured ? await getSecure<StoredTokens>(tokenKey(user)) : null; return { ...configuration, connected: Boolean(tokens?.access_token) }; }
 class Provider implements OAuthClientProvider {
   authorizationUrl?: URL;
   constructor(private readonly user: string, private readonly redirectUri: string) {}
