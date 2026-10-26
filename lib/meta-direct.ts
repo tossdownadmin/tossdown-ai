@@ -28,6 +28,21 @@ export function validateDirectCampaignArgs(input: Record<string, unknown>) {
   if (Array.isArray(input.specialAdCategories) && categories.length !== input.specialAdCategories.length) missing.push("specialAdCategories must contain documented values");
   return { missing, args: { accountId, name, objective, specialAdCategories: categories } };
 }
+const objectiveMap: Record<string, string> = { awareness: "OUTCOME_AWARENESS", traffic: "OUTCOME_TRAFFIC", engagement: "OUTCOME_ENGAGEMENT", leads: "OUTCOME_LEADS", sales: "OUTCOME_SALES", "app promotion": "OUTCOME_APP_PROMOTION" };
+export function parseCampaignRequest(text: string, accounts: Array<{ id: string; name?: string }>) {
+  const lower = text.toLowerCase();
+  if (!/\b(create|launch|start|make|set up)\b.{0,40}\bcampaign\b/i.test(text)) return null;
+  const nameMatch = text.match(/\b(?:campaign\s+(?:called|named)|called|named)\s+["“]?([^"”\n,]+)["”]?/i);
+  const name = nameMatch?.[1]?.trim() || "";
+  const objectiveKey = Object.keys(objectiveMap).find(key => lower.includes(key));
+  const rawObjective = text.match(/\b(OUTCOME_[A-Z_]+)\b/i)?.[1]?.toUpperCase() || "";
+  const objective = rawObjective || (objectiveKey ? objectiveMap[objectiveKey] : "");
+  const categories: string[] = lower.includes("no special") || lower.includes("no category") || lower.includes("regular campaign") ? [] : ["housing", "employment", "credit", "politics", "gambling", "financial"].filter(value => lower.includes(value));
+  const specialAdCategories = categories.length ? [categories[0] === "politics" ? "ISSUES_ELECTIONS_POLITICS" : categories[0] === "gambling" ? "ONLINE_GAMBLING_AND_GAMING" : categories[0] === "financial" ? "FINANCIAL_PRODUCTS_SERVICES" : categories[0].toUpperCase()] : (lower.includes("special") ? [] : undefined);
+  const accountMatches = accounts.filter(account => lower.includes(account.id.toLowerCase()) || (account.name && lower.includes(account.name.toLowerCase())));
+  const missing = [...(!name ? ["campaign name"] : []), ...(!objective ? ["objective (for example awareness, traffic, engagement, leads, sales, or app promotion)"] : []), ...(specialAdCategories === undefined ? ["special ad category choice (say no special category if none applies)"] : []), ...(accountMatches.length === 1 ? [] : [accountMatches.length ? "which accessible account" : "accessible ad account"])];
+  return { name, objective, specialAdCategories, accountMatches, missing };
+}
 function hash(args: Args) { return crypto.createHash("sha256").update(JSON.stringify(args)).digest("hex"); }
 class MetaGraphError extends Error { constructor(readonly status: number) { super("Meta Graph API request failed"); } }
 async function graph(path: string, init?: RequestInit) { const response = await fetch(`${GRAPH_BASE}${path}`, { ...init, headers: { Accept: "application/json", ...(init?.headers || {}), Authorization: `Bearer ${token()}` }, cache: "no-store" }); const payload = await response.json().catch(() => ({})); if (!response.ok) throw new MetaGraphError(response.status); return payload as Record<string, unknown>; }
