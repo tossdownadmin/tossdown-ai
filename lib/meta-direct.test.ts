@@ -26,6 +26,7 @@ describe("direct Meta Marketing API", () => {
     const body = directCampaignPayload({ accountId: "act_1", name: "Test", objective: "OUTCOME_SALES", specialAdCategories: [] });
     expect(body.get("special_ad_categories")).toBe('["NONE"]');
     expect(body.get("status")).toBe("PAUSED");
+    expect(body.get("is_adset_budget_sharing_enabled")).toBe("false");
   });
   it("preserves only sanitized Meta diagnostic fields for the UI", () => {
     expect(sanitizeMetaErrorDetails({ code: 100, error_subcode: 1815754, type: "OAuthException", message: "bad token=secret https://example.test", error_user_title: "Invalid parameter", error_user_msg: "Check the account", fbtrace_id: "trace-123" })).toEqual({ code: 100, error_subcode: 1815754, type: "OAuthException", message: "bad authorization detail external URL", error_user_title: "Invalid parameter", error_user_msg: "Check the account", fbtrace_id: "trace-123" });

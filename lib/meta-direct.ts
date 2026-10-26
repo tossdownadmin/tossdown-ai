@@ -82,7 +82,7 @@ export async function prepareDirectCampaign(user: string, input: Record<string, 
   await putSecure(approvalKey(user, id), { user, args: validation.args, hash: hash(validation.args), expiresAt: Date.now() + APPROVAL_TTL * 1000 }, APPROVAL_TTL);
   return { ok: true as const, approvalId: id, expiresInSeconds: APPROVAL_TTL, args: validation.args };
 }
-export function directCampaignPayload(args: Args) { return new URLSearchParams({ name: args.name, objective: args.objective, special_ad_categories: JSON.stringify(args.specialAdCategories.length ? args.specialAdCategories : ["NONE"]), status: "PAUSED" }); }
+export function directCampaignPayload(args: Args) { return new URLSearchParams({ name: args.name, objective: args.objective, special_ad_categories: JSON.stringify(args.specialAdCategories.length ? args.specialAdCategories : ["NONE"]), status: "PAUSED", is_adset_budget_sharing_enabled: "false" }); }
 export async function executeDirectCampaign(user: string, approvalId: string) {
   const key = approvalKey(user, approvalId); const approval = await getSecure<Approval>(key);
   if (!approval || approval.user !== user || approval.expiresAt < Date.now() || hash(approval.args) !== approval.hash) return { ok: false as const, error: "Approval expired or invalid." };
