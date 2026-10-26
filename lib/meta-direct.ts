@@ -7,7 +7,8 @@ const APPROVAL_TTL = 5 * 60;
 type Args = { accountId: string; name: string; objective: string; specialAdCategories: string[] };
 type Approval = { user: string; args: Args; hash: string; expiresAt: number };
 const approvalKey = (user: string, id: string) => `meta:direct:campaign-approval:${user}:${id}`;
-const allowedAccounts = () => new Set((process.env.META_WRITE_ACCOUNT_IDS || "").split(",").map(value => value.trim()).filter(Boolean));
+const normalizeAccountId = (value: string) => value.trim().replace(/^act_/i, "");
+const allowedAccounts = () => new Set((process.env.META_WRITE_ACCOUNT_IDS || "").split(",").map(normalizeAccountId).filter(Boolean));
 const token = () => process.env.META_SYSTEM_USER_TOKEN || "";
 
 export function directMetaConfiguration() {
@@ -61,11 +62,11 @@ export async function prepareDirectCampaign(user: string, input: Record<string, 
   if (!config.configured) return { ok: false as const, missing: config.missing };
   const validation = validateDirectCampaignArgs(input);
   if (validation.missing.length) return { ok: false as const, missing: validation.missing };
-  if (!allowedAccounts().has(validation.args.accountId)) return { ok: false as const, missing: ["an explicitly allowed account"] };
+  if (allowedAccounts().size && !allowedAccounts().has(normalizeAccountId(validation.args.accountId))) return { ok: false as const, missing: ["an explicitly allowed account"] };
   const readiness = await directMetaReadiness();
   if (!readiness.permissionsChecked) return { ok: false as const, missing: ["Meta permission/account readiness check"] };
   if (!readiness.permissions.includes("ads_management:granted")) return { ok: false as const, missing: ["ads_management permission"] };
-  if (!readiness.accounts.some(account => account.id === validation.args.accountId)) return { ok: false as const, missing: ["the selected account is not accessible to this token"] };
+  if (!readiness.accounts.some(account => normalizeAccountId(account.id) === normalizeAccountId(validation.args.accountId))) return { ok: false as const, missing: ["the selected account is not accessible to this token"] };
   const id = crypto.randomUUID();
   await putSecure(approvalKey(user, id), { user, args: validation.args, hash: hash(validation.args), expiresAt: Date.now() + APPROVAL_TTL * 1000 }, APPROVAL_TTL);
   return { ok: true as const, approvalId: id, expiresInSeconds: APPROVAL_TTL, args: validation.args };
