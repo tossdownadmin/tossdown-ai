@@ -6,7 +6,9 @@ import { getRedisConfig } from "./redis";
 export const META_MCP_URL = "https://mcp.facebook.com/ads";
 export const META_RESOURCE_METADATA_URL = "https://mcp.facebook.com/.well-known/oauth-protected-resource/ads";
 export const META_AUTHORIZATION_SERVER = "https://www.facebook.com/ads";
-export const META_SCOPES = "ads_management ads_read catalog_management business_management pages_show_list pages_manage_ads facebook_branded_content_ads_brand instagram_basic instagram_branded_content_ads_brand ads_mcp_management";
+// Minimal documented scope set for read-only Ads MCP access. Optional branded-content,
+// page-management, catalog-management, and write-ad permissions are intentionally excluded.
+export const META_SCOPES = "ads_read ads_mcp_management";
 type StoredState = { state: string; verifier: string; redirectUri: string };
 type StoredTokens = { access_token: string; refresh_token?: string; token_type: string; expires_in?: number; expires_at?: number; issuer?: string };
 const stateKey = (user: string) => `mcp:meta:oauth-state:${user}`;
