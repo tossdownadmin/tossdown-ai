@@ -52,8 +52,9 @@ function hash(args: Args) { return crypto.createHash("sha256").update(JSON.strin
 type MetaErrorDetails = { code?: number; error_subcode?: number; type?: string; message?: string; error_user_title?: string; error_user_msg?: string; fbtrace_id?: string };
 class MetaGraphError extends Error { constructor(readonly status: number, readonly details: MetaErrorDetails = {}) { super("Meta Graph API request failed"); } }
 async function graph(path: string, init?: RequestInit) { const response = await fetch(`${GRAPH_BASE}${path}`, { ...init, headers: { Accept: "application/json", ...(init?.headers || {}), Authorization: `Bearer ${token()}` }, cache: "no-store" }); const payload = await response.json().catch(() => ({})); if (!response.ok) { const error = payload && typeof payload === "object" && "error" in payload ? (payload as { error?: MetaErrorDetails }).error : undefined; throw new MetaGraphError(response.status, error || {}); } return payload as Record<string, unknown>; }
-function safeApiMessage(message: string | undefined) { if (!message) return ""; return message.replace(/(?:access[_ ]?token|oauth|bearer)\s*[:=]?\s*[^\s,;]+/gi, "authorization detail").replace(/https?:\/\/\S+/gi, "external URL").slice(0, 240); }
-function publicMetaError(error: unknown) { if (!(error instanceof MetaGraphError)) return undefined; const details = error.details; return { code: details.code, error_subcode: details.error_subcode, type: details.type, message: safeApiMessage(details.message), error_user_title: safeApiMessage(details.error_user_title), error_user_msg: safeApiMessage(details.error_user_msg), fbtrace_id: details.fbtrace_id }; }
+function safeApiMessage(message: string | undefined) { if (!message) return ""; return message.replace(/(?:access[_ ]?token|token|oauth|bearer)\s*[:=]?\s*[^\s,;]+/gi, "authorization detail").replace(/https?:\/\/\S+/gi, "external URL").slice(0, 240); }
+export function sanitizeMetaErrorDetails(details: MetaErrorDetails) { return { code: details.code, error_subcode: details.error_subcode, type: details.type, message: safeApiMessage(details.message), error_user_title: safeApiMessage(details.error_user_title), error_user_msg: safeApiMessage(details.error_user_msg), fbtrace_id: details.fbtrace_id }; }
+function publicMetaError(error: unknown) { if (!(error instanceof MetaGraphError)) return undefined; return sanitizeMetaErrorDetails(error.details); }
 function sanitizedGraphError(error: unknown) { if (!(error instanceof MetaGraphError)) return "Meta API request failed. Try again or contact an administrator."; if (error.status === 401 || error.details.code === 190) return "Meta authorization failed. Reconnect or ask an administrator to check the system-user token."; if (error.status === 403) return "Meta denied this action. Confirm the token has ads_management access to this account."; if (error.status === 400) return `Meta rejected the campaign details${safeApiMessage(error.details.message) ? `: ${safeApiMessage(error.details.message)}` : ". Check the account, objective, and special category selection."}`; return "Meta could not complete the request. Try again or contact an administrator."; }
 export async function directMetaReadiness() {
   const config = directMetaConfiguration();
@@ -81,11 +82,12 @@ export async function prepareDirectCampaign(user: string, input: Record<string, 
   await putSecure(approvalKey(user, id), { user, args: validation.args, hash: hash(validation.args), expiresAt: Date.now() + APPROVAL_TTL * 1000 }, APPROVAL_TTL);
   return { ok: true as const, approvalId: id, expiresInSeconds: APPROVAL_TTL, args: validation.args };
 }
+export function directCampaignPayload(args: Args) { return new URLSearchParams({ name: args.name, objective: args.objective, special_ad_categories: JSON.stringify(args.specialAdCategories.length ? args.specialAdCategories : ["NONE"]), status: "PAUSED" }); }
 export async function executeDirectCampaign(user: string, approvalId: string) {
   const key = approvalKey(user, approvalId); const approval = await getSecure<Approval>(key);
   if (!approval || approval.user !== user || approval.expiresAt < Date.now() || hash(approval.args) !== approval.hash) return { ok: false as const, error: "Approval expired or invalid." };
   await deleteSecure(key);
-  const body = new URLSearchParams({ name: approval.args.name, objective: approval.args.objective, special_ad_categories: JSON.stringify(approval.args.specialAdCategories), status: "PAUSED" });
+  const body = directCampaignPayload(approval.args);
   let created: Record<string, unknown>; try { created = await graph(`/act_${encodeURIComponent(approval.args.accountId.replace(/^act_/, ""))}/campaigns`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body }); } catch (error) { return { ok: false as const, error: sanitizedGraphError(error), diagnostics: publicMetaError(error) }; }
   const campaignId = typeof created.id === "string" ? created.id : "";
   if (!campaignId) return { ok: false as const, error: "Meta returned no campaign ID." };
