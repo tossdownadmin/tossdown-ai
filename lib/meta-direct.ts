@@ -1,0 +1,71 @@
+import crypto from "node:crypto";
+import { deleteSecure, getSecure, putSecure } from "./secure-store";
+
+export const META_GRAPH_API_VERSION = "v26.0";
+const GRAPH_BASE = `https://graph.facebook.com/${META_GRAPH_API_VERSION}`;
+const APPROVAL_TTL = 5 * 60;
+type Args = { accountId: string; name: string; objective: string; specialAdCategories: string[] };
+type Approval = { user: string; args: Args; hash: string; expiresAt: number };
+const approvalKey = (user: string, id: string) => `meta:direct:campaign-approval:${user}:${id}`;
+const allowedAccounts = () => new Set((process.env.META_WRITE_ACCOUNT_IDS || "").split(",").map(value => value.trim()).filter(Boolean));
+const token = () => process.env.META_SYSTEM_USER_TOKEN || "";
+
+export function directMetaConfiguration() {
+  const missing: string[] = [];
+  if (!token()) missing.push("META_SYSTEM_USER_TOKEN");
+  if (!process.env.META_WRITE_ACCOUNT_IDS) missing.push("META_WRITE_ACCOUNT_IDS");
+  return { configured: missing.length === 0, writeEnabled: process.env.META_WRITE_ENABLED === "true", missing };
+}
+export function validateDirectCampaignArgs(input: Record<string, unknown>) {
+  const missing: string[] = [];
+  const accountId = typeof input.accountId === "string" ? input.accountId.trim() : "";
+  const name = typeof input.name === "string" ? input.name.trim() : "";
+  const objective = typeof input.objective === "string" ? input.objective.trim() : "";
+  const categories = Array.isArray(input.specialAdCategories) ? input.specialAdCategories.filter((value): value is string => typeof value === "string" && value.trim().length > 0).map(value => value.trim()) : [];
+  if (!accountId) missing.push("accountId");
+  if (!name) missing.push("name");
+  if (!objective) missing.push("objective");
+  if (!Array.isArray(input.specialAdCategories)) missing.push("specialAdCategories (required; use [] when no category applies)");
+  if (Array.isArray(input.specialAdCategories) && categories.length !== input.specialAdCategories.length) missing.push("specialAdCategories must contain documented values");
+  return { missing, args: { accountId, name, objective, specialAdCategories: categories } };
+}
+function hash(args: Args) { return crypto.createHash("sha256").update(JSON.stringify(args)).digest("hex"); }
+async function graph(path: string, init?: RequestInit) { const response = await fetch(`${GRAPH_BASE}${path}`, { ...init, headers: { Accept: "application/json", ...(init?.headers || {}), Authorization: `Bearer ${token()}` }, cache: "no-store" }); const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error("Meta Graph API request failed"); return payload as Record<string, unknown>; }
+export async function directMetaReadiness() {
+  const config = directMetaConfiguration();
+  if (!config.configured) return { ...config, tokenConfigured: false, permissionsChecked: false, permissions: [], accounts: [] as Array<{ id: string; name?: string; account_status?: number }> };
+  try {
+    const [permissionPayload, accountPayload] = await Promise.all([graph("/me/permissions"), graph("/me/adaccounts?fields=id,name,account_status&limit=100")]);
+    const permissions = Array.isArray(permissionPayload.data) ? permissionPayload.data.filter((item): item is { permission: string; status: string } => Boolean(item && typeof item === "object" && typeof (item as { permission?: unknown }).permission === "string" && typeof (item as { status?: unknown }).status === "string")).map(item => `${item.permission}:${item.status}`) : [];
+    const accounts = Array.isArray(accountPayload.data) ? accountPayload.data.filter((item): item is { id: string; name?: string; account_status?: number } => Boolean(item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string")).map(item => ({ id: item.id, name: item.name, account_status: item.account_status })) : [];
+    return { ...config, tokenConfigured: true, permissionsChecked: true, permissions, accounts, allowedAccounts: accounts.filter(account => allowedAccounts().has(account.id)).map(account => account.id) };
+  } catch { return { ...config, tokenConfigured: true, permissionsChecked: false, permissions: [] as string[], accounts: [] as Array<{ id: string; name?: string; account_status?: number }> }; }
+}
+export async function prepareDirectCampaign(user: string, input: Record<string, unknown>) {
+  const config = directMetaConfiguration();
+  if (!config.writeEnabled) return { ok: false as const, missing: ["META_WRITE_ENABLED=true"] };
+  if (!config.configured) return { ok: false as const, missing: config.missing };
+  const validation = validateDirectCampaignArgs(input);
+  if (validation.missing.length) return { ok: false as const, missing: validation.missing };
+  if (!allowedAccounts().has(validation.args.accountId)) return { ok: false as const, missing: ["an explicitly allowed account"] };
+  const readiness = await directMetaReadiness();
+  if (!readiness.permissionsChecked) return { ok: false as const, missing: ["Meta permission/account readiness check"] };
+  if (!readiness.permissions.includes("ads_management:granted")) return { ok: false as const, missing: ["ads_management permission"] };
+  if (!readiness.accounts.some(account => account.id === validation.args.accountId)) return { ok: false as const, missing: ["the selected account is not accessible to this token"] };
+  const id = crypto.randomUUID();
+  await putSecure(approvalKey(user, id), { user, args: validation.args, hash: hash(validation.args), expiresAt: Date.now() + APPROVAL_TTL * 1000 }, APPROVAL_TTL);
+  return { ok: true as const, approvalId: id, expiresInSeconds: APPROVAL_TTL, args: validation.args };
+}
+export async function executeDirectCampaign(user: string, approvalId: string) {
+  const key = approvalKey(user, approvalId); const approval = await getSecure<Approval>(key);
+  if (!approval || approval.user !== user || approval.expiresAt < Date.now() || hash(approval.args) !== approval.hash) return { ok: false as const, error: "Approval expired or invalid." };
+  await deleteSecure(key);
+  const body = new URLSearchParams({ name: approval.args.name, objective: approval.args.objective, special_ad_categories: JSON.stringify(approval.args.specialAdCategories), status: "PAUSED" });
+  const created = await graph(`/act_${encodeURIComponent(approval.args.accountId.replace(/^act_/, ""))}/campaigns`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+  const campaignId = typeof created.id === "string" ? created.id : "";
+  if (!campaignId) return { ok: false as const, error: "Meta returned no campaign ID." };
+  const readback = await graph(`/${encodeURIComponent(campaignId)}?fields=id,name,objective,status,special_ad_categories`);
+  const state = typeof readback.status === "string" ? readback.status : "UNKNOWN";
+  if (state !== "PAUSED") return { ok: false as const, error: "Campaign was created but did not verify as PAUSED." };
+  return { ok: true as const, verified: true, campaignId, state };
+}
