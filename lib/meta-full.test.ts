@@ -1,10 +1,11 @@
 import crypto from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { graph, getSecure, deleteSecure, putSecure, claim, readiness } = vi.hoisted(() => ({ graph: vi.fn(), getSecure: vi.fn(), deleteSecure: vi.fn(), putSecure: vi.fn(), claim: vi.fn(), readiness: vi.fn() }));
+const { graph, getSecure, deleteSecure, putSecure, claim, readiness, verifyAsset } = vi.hoisted(() => ({ graph: vi.fn(), getSecure: vi.fn(), deleteSecure: vi.fn(), putSecure: vi.fn(), claim: vi.fn(), readiness: vi.fn(), verifyAsset: vi.fn() }));
 vi.mock("./meta-direct", async importOriginal => ({ ...(await importOriginal<typeof import("./meta-direct")>()), directGraphRequest: graph, directMetaConfiguration: () => ({ configured: true, writeEnabled: true }), directMetaReadiness: readiness }));
 vi.mock("./secure-store", () => ({ getSecure, deleteSecure, putSecure }));
 vi.mock("./redis", () => ({ getRedisConfig: () => ({ url: "https://example.test", token: "test" }) }));
+vi.mock("./meta-assets", () => ({ verifyMetaAsset: verifyAsset }));
 vi.mock("@upstash/redis", () => ({ Redis: class { set = claim; } }));
 
 import { adPayload, adSetPayload, budgetToMinorUnits, creativePayload, executeFullPackage, prepareFullPackage, validateFullInput } from "./meta-full";
@@ -12,7 +13,7 @@ import { adPayload, adSetPayload, budgetToMinorUnits, creativePayload, executeFu
 const input = {
   accountId: "act_12345", name: "Campaign", objective: "OUTCOME_TRAFFIC", specialAdCategories: [], adSetName: "Ad set", dailyBudget: "1000", country: "PK", ageMin: 18, ageMax: 65, pixelId: "",
   creativeName: "Creative", adName: "Ad", pageId: "123456", instagramActorId: "", primaryText: "Visit us", headline: "Explore", description: "", destinationUrl: "https://example.com", callToAction: "LEARN_MORE",
-  imageDigest: "", imageSize: 0, imageType: "image/png",
+  assetMode: "UPLOAD", accountImageHash: "", existingCreativeId: "", assetName: "", assetSummary: "", imageDigest: "", imageSize: 0, imageType: "image/png",
 };
 const png = Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]), Buffer.alloc(128)]);
 const args = { ...input, dailyBudgetMinor: "100000", currency: "CAD", imageDigest: crypto.createHash("sha256").update(png).digest("hex"), imageSize: png.length };
@@ -20,7 +21,7 @@ const file = new File([png], "image.png", { type: "image/png" });
 
 describe("full paused package", () => {
   beforeEach(() => {
-    graph.mockReset(); getSecure.mockReset(); deleteSecure.mockReset(); putSecure.mockReset(); claim.mockReset().mockResolvedValue("OK");
+    graph.mockReset(); getSecure.mockReset(); deleteSecure.mockReset(); putSecure.mockReset(); claim.mockReset().mockResolvedValue("OK"); verifyAsset.mockReset().mockImplementation(async (_account, _kind, id) => ({ id, name: "Existing asset", summary: "Existing copy" }));
     readiness.mockReset().mockResolvedValue({ permissions: ["ads_management:granted"], accounts: [{ id: "act_12345", currency: "CAD" }], graphError: null });
     getSecure.mockResolvedValue({ user: "u@tossdown.com", args, digest: crypto.createHash("sha256").update(JSON.stringify(args)).digest("hex"), expiresAt: Date.now() + 60_000 });
   });
@@ -66,7 +67,7 @@ describe("full paused package", () => {
       .mockResolvedValueOnce({ id: "300" }).mockResolvedValueOnce({ id: "300", name: "Creative" })
       .mockResolvedValueOnce({ id: "400" }).mockResolvedValueOnce({ id: "400", adset_id: "200", creative: { id: "300" }, status: "PAUSED" });
     const result = await executeFullPackage("u@tossdown.com", "approval", file);
-    expect(result).toEqual({ ok: true, created: { campaignId: "100", adSetId: "200", imageHash: "hash", creativeId: "300", adId: "400" }, verified: true });
+    expect(result).toEqual({ ok: true, created: { campaignId: "100", adSetId: "200", imageHash: "hash", creativeId: "300", adId: "400" }, reused: {}, verified: true });
     expect(graph).toHaveBeenCalledTimes(9);
     expect((graph.mock.calls[0][1].body as URLSearchParams).get("status")).toBe("PAUSED");
     expect((graph.mock.calls[2][1].body as URLSearchParams).get("status")).toBe("PAUSED");
@@ -83,5 +84,39 @@ describe("full paused package", () => {
     expect(await executeFullPackage("u@tossdown.com", "approval", changed)).toMatchObject({ ok: false });
     expect(graph).not.toHaveBeenCalled();
     expect(claim).not.toHaveBeenCalled();
+  });
+  it("reuses an account image without uploading while creating a new paused ad", async () => {
+    const imageArgs = { ...args, assetMode: "ACCOUNT_IMAGE", accountImageHash: "a".repeat(32), imageDigest: "", imageSize: 0 };
+    getSecure.mockResolvedValueOnce({ user: "u@tossdown.com", args: imageArgs, digest: crypto.createHash("sha256").update(JSON.stringify(imageArgs)).digest("hex"), expiresAt: Date.now() + 60_000 });
+    graph.mockResolvedValueOnce({ id: "100" }).mockResolvedValueOnce({ id: "100", status: "PAUSED", objective: "OUTCOME_TRAFFIC" })
+      .mockResolvedValueOnce({ id: "200" }).mockResolvedValueOnce({ id: "200", campaign_id: "100", status: "PAUSED" })
+      .mockResolvedValueOnce({ id: "300" }).mockResolvedValueOnce({ id: "300", name: "Creative" })
+      .mockResolvedValueOnce({ id: "400" }).mockResolvedValueOnce({ id: "400", adset_id: "200", creative: { id: "300" }, status: "PAUSED" });
+    expect(await executeFullPackage("u@tossdown.com", "approval")).toMatchObject({ ok: true, reused: { imageHash: "a".repeat(32) }, created: { creativeId: "300", adId: "400" } });
+    expect(graph).toHaveBeenCalledTimes(8);
+    expect(graph.mock.calls.map(call => call[0])).not.toContain("/act_12345/adimages");
+    expect((graph.mock.calls[4][1].body as URLSearchParams).get("object_story_spec")).toContain('"image_hash":"' + "a".repeat(32) + '"');
+    expect((graph.mock.calls[6][1].body as URLSearchParams).get("status")).toBe("PAUSED");
+  });
+  it("reuses an existing creative unchanged and skips image and creative writes", async () => {
+    const existingArgs = { ...args, assetMode: "EXISTING_CREATIVE", existingCreativeId: "30000", creativeName: "", pageId: "", primaryText: "", headline: "", destinationUrl: "", imageDigest: "", imageSize: 0 };
+    expect(validateFullInput(existingArgs).issues).toEqual([]);
+    getSecure.mockResolvedValueOnce({ user: "u@tossdown.com", args: existingArgs, digest: crypto.createHash("sha256").update(JSON.stringify(existingArgs)).digest("hex"), expiresAt: Date.now() + 60_000 });
+    graph.mockResolvedValueOnce({ id: "100" }).mockResolvedValueOnce({ id: "100", status: "PAUSED", objective: "OUTCOME_TRAFFIC" })
+      .mockResolvedValueOnce({ id: "200" }).mockResolvedValueOnce({ id: "200", campaign_id: "100", status: "PAUSED" })
+      .mockResolvedValueOnce({ id: "400" }).mockResolvedValueOnce({ id: "400", adset_id: "200", creative: { id: "30000" }, status: "PAUSED" });
+    expect(await executeFullPackage("u@tossdown.com", "approval")).toMatchObject({ ok: true, reused: { creativeId: "30000" }, created: { campaignId: "100", adSetId: "200", adId: "400" } });
+    expect(graph).toHaveBeenCalledTimes(6);
+    expect(graph.mock.calls.map(call => call[0])).not.toContain("/act_12345/adimages");
+    expect(graph.mock.calls.map(call => call[0])).not.toContain("/act_12345/adcreatives");
+    expect((graph.mock.calls[4][1].body as URLSearchParams).get("creative")).toBe('{"creative_id":"30000"}');
+    expect((graph.mock.calls[4][1].body as URLSearchParams).get("status")).toBe("PAUSED");
+  });
+  it("rejects an unavailable selected asset before claiming or writing", async () => {
+    const existingArgs = { ...args, assetMode: "EXISTING_CREATIVE", existingCreativeId: "30000", imageDigest: "", imageSize: 0 };
+    getSecure.mockResolvedValueOnce({ user: "u@tossdown.com", args: existingArgs, digest: crypto.createHash("sha256").update(JSON.stringify(existingArgs)).digest("hex"), expiresAt: Date.now() + 60_000 });
+    verifyAsset.mockRejectedValueOnce(new Error("Selected creative is not available in this ad account."));
+    expect(await executeFullPackage("u@tossdown.com", "approval")).toMatchObject({ ok: false, error: "Selected creative is not available in this ad account." });
+    expect(claim).not.toHaveBeenCalled(); expect(graph).not.toHaveBeenCalled();
   });
 });

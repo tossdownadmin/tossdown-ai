@@ -17,7 +17,7 @@ export async function POST(request: Request) {
   let form: FormData;
   try { form = await request.formData(); } catch { return Response.json({ error: "Invalid upload." }, { status: 400 }); }
   const approvalId = form.get("approvalId"), image = form.get("image");
-  if (typeof approvalId !== "string" || !/^[0-9a-f-]{36}$/i.test(approvalId) || !(image instanceof File)) return Response.json({ error: "Approval and image are required." }, { status: 400 });
-  const result = await executeFullPackage(email, approvalId, image);
+  if (typeof approvalId !== "string" || !/^[0-9a-f-]{36}$/i.test(approvalId) || (image !== null && !(image instanceof File))) return Response.json({ error: "Valid approval and optional image are required." }, { status: 400 });
+  const result = await executeFullPackage(email, approvalId, image instanceof File ? image : undefined);
   return Response.json(result, { status: result.ok ? 200 : 409 });
 }
