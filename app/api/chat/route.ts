@@ -2,9 +2,10 @@ import { streamBedrock } from "../../../lib/bedrock";
 import { LIMITS, validateMessages } from "../../../lib/limits";
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
+import { getRedisConfig } from "../../../lib/redis";
 
 export const runtime = "nodejs";
-function limiter() { if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) return null; return new Ratelimit({ redis: Redis.fromEnv(), limiter: Ratelimit.slidingWindow(20, "1 h"), analytics: true }); }
+function limiter() { const config = getRedisConfig(); if (!config) return null; return new Ratelimit({ redis: new Redis(config), limiter: Ratelimit.slidingWindow(20, "1 h"), analytics: true }); }
 export async function POST(request: Request) {
   const length = Number(request.headers.get("content-length") || 0); if (length > LIMITS.maxRequestBytes) return Response.json({ error: "Request is too large." }, { status: 413 });
   const rate = limiter(); if (!rate) return Response.json({ error: "Rate limiting is not configured." }, { status: 503 });
