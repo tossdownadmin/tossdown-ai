@@ -20,7 +20,7 @@ type Connection = {
 type Account = { id: string; name?: string };
 type Skill = { id: string; name: string; description: string };
 type ChatSummary = { id: string; title: string; updatedAt: string; modelId: string; skillIds: string[] };
-type StreamEvent = { type: string; text?: string; name?: string; ok?: boolean; error?: string };
+type StreamEvent = { type: string; text?: string; name?: string; ok?: boolean; error?: string; failureCode?: string };
 
 const starters = [
   { label: "Write ad copy", prompt: "Write three distinct paid-social ad concepts for " },
@@ -218,7 +218,7 @@ export default function Chat() {
         if (event.type === "tool_start" || event.type === "tool_result") {
           setMessages(current => current.map((message, index) => index === current.length - 1 ? {
             ...message,
-            activity: [...(message.activity || []), { label: (event.type === "tool_start" ? "Using " : "") + (event.name || "tool"), ok: event.type === "tool_result" ? event.ok : undefined }],
+            activity: [...(message.activity || []), { label: (event.type === "tool_start" ? "Using " : "") + (event.name || "tool") + (event.type === "tool_result" && event.failureCode ? ` · ${event.failureCode}` : ""), ok: event.type === "tool_result" ? event.ok : undefined }],
           } : message));
         }
         if (event.type === "error") {
