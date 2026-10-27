@@ -34,11 +34,11 @@ export function toBedrockToolResult(toolUseId: string, result: { isError?: boole
   }
   return { toolResult: { toolUseId, status: result.isError ? "error" : "success", content: content.length ? content : [{ text: result.isError ? "Tool reported an error." : "Tool returned no data." }] } };
 }
-export async function* runBedrock(messages: InputMessage[], modelId: string, tools: BedrockTool[]): AsyncGenerator<BedrockEvent> {
+export async function* runBedrock(messages: InputMessage[], modelId: string, tools: BedrockTool[], skillInstructions: string[] = []): AsyncGenerator<BedrockEvent> {
   const conversation: any[] = messages.map(m => ({ role: m.role, content: [{ text: m.content }] }));
   const toolDefinitions = tools.map(t => ({ toolSpec: { name: t.name, description: t.description || `Read-only ${t.name} data`, inputSchema: { json: t.inputSchema } } }));
   for (let turn = 0; turn < MAX_TURNS; turn++) {
-    const input: ConverseStreamCommandInput = { modelId, system: [{ text: system }], messages: conversation, inferenceConfig: { maxTokens: LIMITS.maxOutputTokens, temperature: 0.4 }, ...(toolDefinitions.length ? { toolConfig: { tools: toolDefinitions } as any } : {}) };
+    const input: ConverseStreamCommandInput = { modelId, system: [{ text: `${system}${skillInstructions.length ? `\n\nActive skills:\n${skillInstructions.map(instruction => `- ${instruction}`).join("\n")}` : ""}` }], messages: conversation, inferenceConfig: { maxTokens: LIMITS.maxOutputTokens, temperature: 0.4 }, ...(toolDefinitions.length ? { toolConfig: { tools: toolDefinitions } as any } : {}) };
     let output;
     try { output = await client().send(new ConverseStreamCommand(input)); } catch (error) { throw Object.assign(error instanceof Error ? error : new Error("Bedrock request failed"), { diagnostics: structuralDiagnostics(conversation) }); }
     const blocks: any[] = []; let stopReason = "";
