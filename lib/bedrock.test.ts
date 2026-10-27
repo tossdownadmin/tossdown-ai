@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import * as metaDirect from "./meta-direct";
+import * as metaAudit from "./meta-audit";
 import { campaignProposalEvent, directMetaToolDefinitions, dispatchDirectMetaTool, normalizeAssistantContent, parseToolUseInput, structuralDiagnostics, toBedrockToolResult } from "./bedrock";
 
 describe("Bedrock tool-result continuation", () => {
@@ -32,5 +33,15 @@ describe("Bedrock tool-result continuation", () => {
     expect(prepare).toHaveBeenCalledWith("employee@tossdown.com", proposal.args);
     expect(campaignProposalEvent(result as typeof proposal)).toMatchObject({ type: "campaign_proposal", status: "awaiting_approval", approvalId: proposal.approvalId, args: proposal.args });
     prepare.mockRestore();
+  });
+
+  it("binds a shared audit to the server-selected account, not model arguments", async () => {
+    const audit = vi.spyOn(metaAudit, "auditSelectedMetaAccount").mockResolvedValue({ ok: true, account: { id: "act_123" } } as never);
+    const selected = directMetaToolDefinitions("colleague@tossdown.com", "act_123").find(tool => tool.name === "meta_audit_selected_account");
+    expect(selected?.inputSchema).toEqual({ type: "object", properties: {} });
+    await dispatchDirectMetaTool(selected!, { accountId: "act_999" });
+    expect(audit).toHaveBeenCalledWith("act_123");
+    expect(directMetaToolDefinitions("colleague@tossdown.com", "not-an-account").some(tool => tool.name === "meta_audit_selected_account")).toBe(false);
+    audit.mockRestore();
   });
 });

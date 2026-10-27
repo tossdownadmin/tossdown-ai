@@ -5,19 +5,13 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { signIn, signOut, useSession } from "next-auth/react";
 import { completedMessages, requestMessages } from "../lib/chat-client";
+import { withSharedMetaAccess, type AdConnection } from "../lib/meta-connection-view";
 
 type Activity = { label: string; ok?: boolean };
 type Message = { role: "user" | "assistant"; content: string; activity?: Activity[] };
-type Connection = {
-  id: "google_ads" | "meta_ads";
-  label: string;
-  status: string;
-  allowlistReady?: boolean;
-  missing?: string[];
-  tools?: Array<{ name: string }>;
-  discoveryTruncated?: boolean;
-};
+type Connection = AdConnection;
 type Account = { id: string; name?: string };
+type DirectMetaStatus = { configured: boolean; available: boolean; truncated: boolean };
 type Skill = { id: string; name: string; description: string };
 type ChatSummary = { id: string; title: string; updatedAt: string; modelId: string; skillIds: string[] };
 type StreamEvent = { type: string; text?: string; name?: string; ok?: boolean; error?: string; failureCode?: string };
@@ -77,6 +71,7 @@ export default function Chat() {
   const [enabledConnections, setEnabledConnections] = useState<string[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [directMetaStatus, setDirectMetaStatus] = useState<DirectMetaStatus | null>(null);
   const [accountError, setAccountError] = useState("");
   const [accountLoading, setAccountLoading] = useState(false);
   const [input, setInput] = useState("");
@@ -174,7 +169,12 @@ export default function Chat() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Meta accounts are unavailable.");
       setAccounts(data.accounts || []);
+      setDirectMetaStatus({ configured: Boolean(data.configured), available: Boolean(data.available), truncated: Boolean(data.truncated) });
+      if (!data.configured) setAccountError("Shared Meta access is not configured.");
+      else if (!data.available) setAccountError(data.graphError ? "Meta could not load the shared ad accounts. Ask an administrator to check the token and permissions." : "No ad accounts are accessible to the shared Meta token.");
     } catch (reason) {
+      setDirectMetaStatus(null);
+      setAccounts([]);
       setAccountError(reason instanceof Error ? reason.message : "Meta accounts are unavailable.");
     } finally {
       setAccountLoading(false);
@@ -294,7 +294,7 @@ export default function Chat() {
   const displayConnections: Connection[] = previewMode ? [
     { id: "meta_ads", label: "Meta Ads", status: "configured", allowlistReady: true },
     { id: "google_ads", label: "Google Ads", status: "not_configured" },
-  ] : connections;
+  ] : withSharedMetaAccess(connections, Boolean(directMetaStatus?.available));
   const displayAccounts = previewMode ? [{ id: "sample-account", name: "Sample ad account" }] : accounts;
   const activeChat = displayChats.find(chat => chat.id === currentChatId);
   const visibleChats = displayChats.filter(chat => chat.title.toLowerCase().includes(search.toLowerCase()));
@@ -344,14 +344,14 @@ export default function Chat() {
           {popover === "tools" ? <div className="popover-body">{displayConnections.length ? displayConnections.map(connection => {
             const ready = connection.status === "configured" && connection.allowlistReady;
             const enabled = enabledConnections.includes(connection.id);
-            return <div key={connection.id} className="tool-row"><div><strong>{connection.label}</strong><small>{ready ? "Connected · Read-only" : connection.status === "disconnected" ? "Disconnected" : "Not configured"}</small></div><label className="switch"><input type="checkbox" disabled={!ready || previewMode} checked={enabled} onChange={() => setEnabledConnections(current => enabled ? current.filter(id => id !== connection.id) : [...current, connection.id])} /><span className="sr-only">Use {connection.label} in this chat</span></label></div>;
+            return <div key={connection.id} className="tool-row"><div><strong>{connection.label}</strong><small>{ready && connection.id === "meta_ads" && directMetaStatus?.available ? "Shared account access · Read-only" : ready ? "Connected · Read-only" : connection.status === "disconnected" ? "Personal MCP disconnected" : "Not configured"}</small></div><label className="switch"><input type="checkbox" disabled={!ready || previewMode} checked={enabled} onChange={() => setEnabledConnections(current => enabled ? current.filter(id => id !== connection.id) : [...current, connection.id])} /><span className="sr-only">Use {connection.label} in this chat</span></label></div>;
           }) : <p className="muted-note">No ad connections configured.</p>}
-          {(meta?.status === "configured" || previewMode) && <div className="account-control"><label htmlFor="meta-account">Meta ad account</label><div className="account-select-row"><select id="meta-account" value={selectedAccountId} onChange={event => {
+          {(directMetaStatus?.configured || meta?.status === "configured" || previewMode) && <div className="account-control"><label htmlFor="meta-account">Meta ad account</label><div className="account-select-row"><select id="meta-account" value={selectedAccountId} onChange={event => {
             const account = displayAccounts.find(item => item.id === event.target.value);
             setSelectedAccountId(event.target.value);
             if (account && meta?.allowlistReady) setEnabledConnections(current => current.includes("meta_ads") ? current : [...current, "meta_ads"]);
             if (account) setInput(current => current.trim() ? current : "Audit Meta ad account " + (account.name || account.id) + " (" + account.id + "). Review campaign delivery, spend and performance, then build a prioritized action plan using live connected data only.");
-          }} disabled={previewMode}><option value="">Choose an account</option>{displayAccounts.map(account => <option key={account.id} value={account.id}>{account.name || "Unnamed account"} · {account.id}</option>)}</select><button onClick={loadAccounts} disabled={accountLoading || previewMode}>{accountLoading ? "Loading" : "Refresh"}</button></div>{accountError && <p className="field-error">{accountError}</p>}<p className="muted-note">Selecting an account does not grant access. Server permissions still apply.</p></div>}
+          }} disabled={previewMode || !displayAccounts.length}><option value="">Choose an account</option>{displayAccounts.map(account => <option key={account.id} value={account.id}>{account.name || "Unnamed account"} · {account.id}</option>)}</select><button onClick={loadAccounts} disabled={accountLoading || previewMode}>{accountLoading ? "Loading" : "Refresh"}</button></div>{accountError && <p className="field-error">{accountError}</p>}{directMetaStatus?.truncated && <p className="muted-note">The account list is incomplete; ask an administrator if yours is missing.</p>}<p className="muted-note">Shared Meta accounts are available to signed-in tossdown employees. Audits are read-only; campaign changes still require separate approval.</p></div>}
           <details className="diagnostics"><summary>Connection details</summary>{displayConnections.map(connection => <p key={connection.id}>{connection.label}: {connection.status}{connection.missing?.length ? " · Missing " + connection.missing.join(", ") : ""}{connection.tools?.length ? " · " + connection.tools.length + " discovered tools" : ""}{connection.discoveryTruncated ? " · Discovery truncated" : ""}</p>)}</details>
           </div> : <div className="popover-body">{skills.length ? skills.map(skill => <label key={skill.id} className="skill-row"><input type="checkbox" checked={skillIds.includes(skill.id)} onChange={() => setSkillIds(current => current.includes(skill.id) ? current.filter(id => id !== skill.id) : [...current, skill.id])} /><span><strong>{skill.name}</strong><small>{skill.description}</small></span></label>) : <p className="muted-note">No shared skills configured.</p>}</div>}
         </div>}

@@ -3,7 +3,9 @@ import { fromStatic } from "@aws-sdk/token-providers";
 import { awsCredentialsProvider } from "@vercel/oidc-aws-credentials-provider";
 import { LIMITS } from "./limits";
 import { callTool, type McpTool } from "./mcp";
-import { directMetaReadiness, prepareDirectCampaign } from "./meta-direct";
+import { prepareDirectCampaign } from "./meta-direct";
+import { auditSelectedMetaAccount, validMetaAccountId } from "./meta-audit";
+import { listSharedMetaAccounts } from "./meta-accounts";
 import { classifyMcpFailure, McpToolsFailedError, mcpFailureMessage, primaryMcpFailure, type McpFailureCode } from "./mcp-failure";
 
 const system = "You are tossdown AI, an internal marketing assistant for tossdown employees. Be practical, clear, and honest. Help with ads, creative briefs, plans, and analysis. Do not claim access to live campaign data unless it is provided in the conversation. Keep recommendations concise and structured.";
@@ -11,10 +13,21 @@ const MAX_TURNS = 4;
 const client = () => { const region = process.env.AWS_REGION || "eu-north-1"; const bearerToken = process.env.AWS_BEARER_TOKEN_BEDROCK; if (bearerToken) return new BedrockRuntimeClient({ region, token: fromStatic({ token: { token: bearerToken } }) }); return new BedrockRuntimeClient({ region, ...(process.env.AWS_ROLE_ARN ? { credentials: awsCredentialsProvider({ roleArn: process.env.AWS_ROLE_ARN }) } : {}) }); };
 type InputMessage = { role: "user" | "assistant"; content: string };
 export type BedrockEvent = { type: "text"; text: string } | { type: "tool_start"; name: string } | { type: "tool_result"; name: string; ok: boolean; failureCode?: McpFailureCode } | { type: "campaign_proposal"; status: "awaiting_approval" | "needs_details"; approvalId?: string; expiresInSeconds?: number; args?: Record<string, unknown>; missing?: string[]; accounts?: Array<{ id: string; name?: string }> };
-export type ServerTool = { name: string; description: string; inputSchema: Record<string, unknown>; kind: "direct_meta"; user: string };
+export type ServerTool = { name: string; description: string; inputSchema: Record<string, unknown>; kind: "direct_meta"; user: string; accountId?: string };
 export type BedrockTool = McpTool | ServerTool;
-export function directMetaToolDefinitions(user: string): ServerTool[] { return [{ name: "meta_list_ad_accounts", description: "List the authenticated server token's accessible Meta ad accounts. Read-only; never creates or changes anything.", inputSchema: { type: "object", properties: {} }, kind: "direct_meta", user }, { name: "meta_prepare_campaign", description: "Prepare a proposed PAUSED Meta campaign after resolving an accessible account and exact campaign settings. This only creates an expiring approval proposal; it cannot approve or execute a campaign.", inputSchema: { type: "object", properties: { accountId: { type: "string" }, name: { type: "string" }, objective: { type: "string", description: "Valid Meta OUTCOME_* objective" }, specialAdCategories: { type: "array", items: { type: "string" }, description: "Use [] when no special category applies" } }, required: ["accountId", "name", "objective", "specialAdCategories"] }, kind: "direct_meta", user }]; }
-export async function dispatchDirectMetaTool(tool: ServerTool, args: Record<string, unknown>) { return tool.name === "meta_list_ad_accounts" ? directMetaReadiness() : prepareDirectCampaign(tool.user, args); }
+export function directMetaToolDefinitions(user: string, selectedAccountId = ""): ServerTool[] { return [
+  { name: "meta_list_ad_accounts", description: "List accounts accessible to the shared Meta system-user token. Read-only.", inputSchema: { type: "object", properties: {} }, kind: "direct_meta", user },
+  ...(validMetaAccountId(selectedAccountId) ? [{ name: "meta_audit_selected_account", description: "Read campaign structure and last 30 days of campaign-level performance for the account selected by the employee. Read-only; account is bound server-side. Results may be truncated.", inputSchema: { type: "object", properties: {} }, kind: "direct_meta" as const, user, accountId: selectedAccountId }] : []),
+  { name: "meta_prepare_campaign", description: "Prepare a proposed PAUSED Meta campaign after resolving an accessible account and exact campaign settings. This only creates an expiring approval proposal; it cannot approve or execute a campaign.", inputSchema: { type: "object", properties: { accountId: { type: "string" }, name: { type: "string" }, objective: { type: "string", description: "Valid Meta OUTCOME_* objective" }, specialAdCategories: { type: "array", items: { type: "string" }, description: "Use [] when no special category applies" } }, required: ["accountId", "name", "objective", "specialAdCategories"] }, kind: "direct_meta", user },
+]; }
+export async function dispatchDirectMetaTool(tool: ServerTool, args: Record<string, unknown>) {
+  if (tool.name === "meta_audit_selected_account") return auditSelectedMetaAccount(tool.accountId || "");
+  if (tool.name === "meta_list_ad_accounts") {
+    const readiness = await listSharedMetaAccounts();
+    return readiness.graphError && !readiness.accounts.length ? { ok: false as const, error: "The shared Meta account list is unavailable. Ask an administrator to check the connection." } : { ok: true as const, accounts: readiness.accounts.map(({ id, name, currency }) => ({ id, name, currency })) };
+  }
+  return prepareDirectCampaign(tool.user, args);
+}
 export function campaignProposalEvent(result: Awaited<ReturnType<typeof prepareDirectCampaign>>): BedrockEvent { return result.ok ? { type: "campaign_proposal", status: "awaiting_approval", approvalId: result.approvalId, expiresInSeconds: result.expiresInSeconds, args: result.args } : { type: "campaign_proposal", status: "needs_details", missing: result.missing }; }
 export type SafeToolResult = { toolResult: { toolUseId: string; status?: "success" | "error"; content: Array<{ text: string } | { json: unknown }> } };
 export function parseToolUseInput(input: string | undefined): Record<string, unknown> { if (!input) return {}; const parsed = JSON.parse(input); return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}; }
