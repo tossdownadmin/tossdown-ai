@@ -34,6 +34,12 @@ export function toBedrockToolResult(toolUseId: string, result: { isError?: boole
   }
   return { toolResult: { toolUseId, status: result.isError ? "error" : "success", content: content.length ? content : [{ text: result.isError ? "Tool reported an error." : "Tool returned no data." }] } };
 }
+export function normalizeAssistantContent(blocks: any[]) {
+  return blocks.filter(block => {
+    if (block?.toolUse) return typeof block.toolUse.toolUseId === "string" && typeof block.toolUse.name === "string";
+    return typeof block?.text === "string" && block.text.length > 0;
+  }).map(block => block.toolUse ? { toolUse: { toolUseId: block.toolUse.toolUseId, name: block.toolUse.name, input: parseToolUseInput(block.toolUse.input) } } : { text: block.text });
+}
 export async function* runBedrock(messages: InputMessage[], modelId: string, tools: BedrockTool[], skillInstructions: string[] = []): AsyncGenerator<BedrockEvent> {
   const conversation: any[] = messages.map(m => ({ role: m.role, content: [{ text: m.content }] }));
   const toolDefinitions = tools.map(t => ({ toolSpec: { name: t.name, description: t.description || `Read-only ${t.name} data`, inputSchema: { json: t.inputSchema } } }));
@@ -53,10 +59,11 @@ export async function* runBedrock(messages: InputMessage[], modelId: string, too
     }
     const content = blocks.filter(Boolean);
     if (stopReason !== "tool_use" || !content.some(b => b.toolUse)) return;
-    const normalizedContent = content.map(block => block.toolUse ? { toolUse: { ...block.toolUse, input: parseToolUseInput(block.toolUse.input) } } : block);
+    const normalizedContent = normalizeAssistantContent(content);
+    if (!normalizedContent.some(block => "toolUse" in block)) return;
     conversation.push({ role: "assistant", content: normalizedContent });
     const results: any[] = [];
-    for (const block of content) if (block.toolUse) {
+    for (const block of normalizedContent) if (block.toolUse) {
       const tool = tools.find(t => t.name === block.toolUse.name); if (!tool) { results.push({ toolResult: { toolUseId: block.toolUse.toolUseId, status: "error", content: [{ text: "Tool is not allowlisted." }] } }); continue; }
       yield { type: "tool_start", name: tool.name };
       try { const args = block.toolUse.input ? JSON.parse(block.toolUse.input) : {}; if ("kind" in tool && tool.kind === "direct_meta") { const directResult = await dispatchDirectMetaTool(tool, args); const failed = "ok" in directResult && directResult.ok === false; const safeText = JSON.stringify(directResult); results.push({ toolResult: { toolUseId: block.toolUse.toolUseId, status: failed ? "error" : "success", content: [{ text: safeText }] } }); if (tool.name === "meta_prepare_campaign") yield campaignProposalEvent(directResult as Awaited<ReturnType<typeof prepareDirectCampaign>>); yield { type: "tool_result", name: tool.name, ok: !failed }; } else { const result = await callTool(tool as McpTool, args); const safeResult = result as unknown as { isError?: boolean; content?: Array<{ type?: string; text?: string; json?: unknown }> }; results.push(toBedrockToolResult(block.toolUse.toolUseId, safeResult)); yield { type: "tool_result", name: tool.name, ok: safeResult.isError !== true }; } } catch { results.push({ toolResult: { toolUseId: block.toolUse.toolUseId, status: "error", content: [{ text: "Tool request failed or timed out." }] } }); yield { type: "tool_result", name: tool.name, ok: false }; }
