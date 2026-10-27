@@ -124,7 +124,7 @@ export default function Chat() {
   }, [session?.user, previewMode]);
 
   useEffect(() => {
-    if (!session?.user || previewMode || !messages.length || busy || !currentChatId || !modelId) return;
+    if (!session?.user || previewMode || !messages.length || busy || !currentChatId || !models.includes(modelId)) return;
     const durableMessages = error && messages.at(-1)?.role === "assistant" ? messages.slice(0, -1) : messages;
     const stored = completedMessages(durableMessages);
     if (!stored.length) return;
@@ -144,7 +144,7 @@ export default function Chat() {
       }).catch(reason => setHistoryError(reason instanceof Error ? reason.message : "This chat could not be saved."));
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [messages, busy, error, currentChatId, modelId, skillIds, session?.user, previewMode]);
+  }, [messages, busy, error, currentChatId, modelId, models, skillIds, session?.user, previewMode]);
 
   useEffect(() => {
     if (previewMode || !session?.user) return;
@@ -183,6 +183,10 @@ export default function Chat() {
 
   async function send(prompt = input, retry = false) {
     if (!prompt.trim() || busy || previewMode) return;
+    if (!models.includes(modelId)) {
+      setError(models.length ? "Choose an available model before sending." : "No quota-confirmed model is configured. Ask an administrator to update the Bedrock model settings.");
+      return;
+    }
     const previous = retry && messages.at(-1)?.role === "assistant" && messages.at(-2)?.role === "user" ? messages.slice(0, -2) : messages;
     const next: Message[] = [...previous.filter(message => message.content.trim()), { role: "user", content: prompt.trim() }];
     setMessages([...next, { role: "assistant", content: "", activity: [] }]);
@@ -279,12 +283,14 @@ export default function Chat() {
     savedSnapshot.current = "";
     setInput("");
     setError("");
+    setModelId(displayModels[0] || "");
     setDrawer(false);
     composerRef.current?.focus();
   }
 
   const displayChats = previewMode ? previewChats : chats;
   const displayModels = previewMode ? ["global.anthropic.claude-sonnet-4-6", "global.anthropic.claude-opus-4-6-v1", "global.anthropic.claude-haiku-4-5-20251001-v1:0"] : models;
+  const unavailableModel = Boolean(modelId && !displayModels.includes(modelId));
   const displayConnections: Connection[] = previewMode ? [
     { id: "meta_ads", label: "Meta Ads", status: "configured", allowlistReady: true },
     { id: "google_ads", label: "Google Ads", status: "not_configured" },
@@ -315,14 +321,14 @@ export default function Chat() {
         <button className="icon-btn mobile-only" onClick={() => setDrawer(true)} aria-label="Open chat history"><Icon name="menu" /></button>
         <div className="chat-heading"><strong>{activeChat?.title || "New conversation"}</strong><span>{previewMode ? "Sample workspace" : "Marketing workspace"}</span></div>
         <div className="header-controls">
-          <label className="model-picker"><span className="sr-only">Model</span><select value={modelId} onChange={event => setModelId(event.target.value)} disabled={!displayModels.length}>{displayModels.length ? displayModels.map(model => <option key={model} value={model}>{modelName(model)}</option>) : <option value="">No model configured</option>}</select><Icon name="chevron" /></label>
+          <label className="model-picker"><span className="sr-only">Model</span><select value={modelId} onChange={event => setModelId(event.target.value)} disabled={!displayModels.length}>{unavailableModel && <option value={modelId} disabled>Unavailable: {modelName(modelId)}</option>}{displayModels.length ? displayModels.map(model => <option key={model} value={model}>{modelName(model)}</option>) : <option value="">No quota-confirmed model</option>}</select><Icon name="chevron" /></label>
           <button className={"connection-pill" + (meta?.status === "configured" ? " connected" : "")} onClick={() => setPopover(popover === "tools" ? null : "tools")} aria-label="Meta Ads connection"><span className="pill-dot" /> Meta</button>
           <button className={"connection-pill" + (google?.status === "configured" ? " connected" : "")} onClick={() => setPopover(popover === "tools" ? null : "tools")} aria-label="Google Ads connection"><span className="pill-dot" /> Google</button>
         </div>
       </header>
 
       <div className="conversation-scroll" ref={scrollRef}>
-        <div className="conversation-content">{messages.length ? messages.map((message, index) => <article key={index} className={"chat-message " + message.role}>
+        <div className="conversation-content">{unavailableModel && <div className="model-notice" role="status">This chat used {modelName(modelId)}, which is no longer available. Choose a model above to continue; your previous messages remain saved.</div>}{!displayModels.length && !previewMode && <div className="model-notice" role="status">No quota-confirmed model is configured. An administrator must set a supported inference profile before chat can run.</div>}{messages.length ? messages.map((message, index) => <article key={index} className={"chat-message " + message.role}>
           <div className="message-author">{message.role === "user" ? "You" : <><span className="assistant-mark"><Icon name="spark" /></span> tossdown AI</>}</div>
           <div className="message-content">{message.role === "user" ? <p>{message.content}</p> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ table: ({ children }) => <div className="table-scroll"><table>{children}</table></div> }}>{message.content}</ReactMarkdown>}</div>
           {message.role === "assistant" && message.activity?.length ? <details className="tool-activity"><summary>Activity · {message.activity.length} steps</summary>{message.activity.map((item, activityIndex) => <div key={activityIndex} className={item.ok === false ? "activity-failed" : ""}>{item.ok === false ? "!" : item.ok ? "✓" : "·"} {item.label}</div>)}</details> : null}
@@ -349,7 +355,7 @@ export default function Chat() {
           <details className="diagnostics"><summary>Connection details</summary>{displayConnections.map(connection => <p key={connection.id}>{connection.label}: {connection.status}{connection.missing?.length ? " · Missing " + connection.missing.join(", ") : ""}{connection.tools?.length ? " · " + connection.tools.length + " discovered tools" : ""}{connection.discoveryTruncated ? " · Discovery truncated" : ""}</p>)}</details>
           </div> : <div className="popover-body">{skills.length ? skills.map(skill => <label key={skill.id} className="skill-row"><input type="checkbox" checked={skillIds.includes(skill.id)} onChange={() => setSkillIds(current => current.includes(skill.id) ? current.filter(id => id !== skill.id) : [...current, skill.id])} /><span><strong>{skill.name}</strong><small>{skill.description}</small></span></label>) : <p className="muted-note">No shared skills configured.</p>}</div>}
         </div>}
-        <div className="composer-shell"><textarea ref={composerRef} rows={2} value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="Ask tossdown AI anything…" aria-label="Message" /><div className="composer-toolbar"><div className="composer-tools"><button className={"toolbar-btn" + (popover === "tools" ? " active" : "")} onClick={() => setPopover(popover === "tools" ? null : "tools")}><Icon name="sliders" /> Tools{enabledConnections.length ? <span className="toolbar-count">{enabledConnections.length}</span> : null}</button><button className={"toolbar-btn" + (popover === "skills" ? " active" : "")} onClick={() => setPopover(popover === "skills" ? null : "skills")}><Icon name="spark" /> Skills{activeSkills.length ? <span className="toolbar-count">{activeSkills.length}</span> : null}</button>{selectedAccountId && <span className="selected-account-chip">{displayAccounts.find(account => account.id === selectedAccountId)?.name || "Account selected"}</span>}</div>{busy ? <button className="stop-btn" onClick={() => abort.current?.abort()}>Stop</button> : <button className="send-btn" disabled={!input.trim() || previewMode} onClick={() => void send()} aria-label="Send message"><Icon name="send" /></button>}</div></div>
+        <div className="composer-shell"><textarea ref={composerRef} rows={2} value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="Ask tossdown AI anything…" aria-label="Message" /><div className="composer-toolbar"><div className="composer-tools"><button className={"toolbar-btn" + (popover === "tools" ? " active" : "")} onClick={() => setPopover(popover === "tools" ? null : "tools")}><Icon name="sliders" /> Tools{enabledConnections.length ? <span className="toolbar-count">{enabledConnections.length}</span> : null}</button><button className={"toolbar-btn" + (popover === "skills" ? " active" : "")} onClick={() => setPopover(popover === "skills" ? null : "skills")}><Icon name="spark" /> Skills{activeSkills.length ? <span className="toolbar-count">{activeSkills.length}</span> : null}</button>{selectedAccountId && <span className="selected-account-chip">{displayAccounts.find(account => account.id === selectedAccountId)?.name || "Account selected"}</span>}</div>{busy ? <button className="stop-btn" onClick={() => abort.current?.abort()}>Stop</button> : <button className="send-btn" disabled={!input.trim() || previewMode || !displayModels.includes(modelId)} onClick={() => void send()} aria-label="Send message"><Icon name="send" /></button>}</div></div>
         <p className="composer-hint">{previewMode ? "Sample preview only · Sign in on the configured app to chat" : "Enter to send · Shift+Enter for a new line · AI can make mistakes"}</p>
       </div>
     </section>

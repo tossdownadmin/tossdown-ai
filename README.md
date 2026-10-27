@@ -2,7 +2,7 @@
 
 Internal marketing chat with optional server-side MCP connections. MCP is disabled by default. The app uses Next.js App Router, Amazon Bedrock ConverseStream, Upstash Redis rate limiting, Vercel OIDC for short-lived AWS credentials, and the official MCP TypeScript SDK with Streamable HTTP transport.
 
-Google sign-in was removed at the request of the owner. It previously restricted access to verified `@tossdown.com` employees. Without it, anyone who can reach the deployment may use the app; keep the deployment private or add an organization-approved access layer before sharing it broadly. Do not send confidential information.
+Google sign-in restricts saved chats and connected tools to `@tossdown.com` accounts. Chats are stored under the signed-in email in Redis, so each employee sees their own history. Shared skills are currently predefined in `lib/skills.ts`; the app does not yet support uploading or editing Markdown skills in the UI.
 
 ## Local startup
 
@@ -13,7 +13,7 @@ Google sign-in was removed at the request of the owner. It previously restricted
 
 ## Required configuration
 
-- `BEDROCK_MODEL_ID`: in AWS Console, open Amazon Bedrock > Playgrounds > Chat, select the Claude Sonnet 4.6 model/profile that successfully worked, then copy the exact Model ID or inference profile ID shown in the model selector/details panel. Do not infer or substitute an ID. This value is server-only.
+- `BEDROCK_MODEL_ID`: set the default to a reviewed inference profile, e.g. `global.anthropic.claude-sonnet-4-6`. Copy and confirm the exact profile ID in AWS Console > Amazon Bedrock > Inference profiles (Stockholm, `eu-north-1`). The raw model ID `anthropic.claude-sonnet-4-6` is not a substitute; this account received an on-demand throughput error for it.
 - `AWS_REGION=eu-north-1`.
 - `AWS_BEARER_TOKEN_BEDROCK`: optional server-only Amazon Bedrock API key. When present, the current AWS SDK bearer-token provider is used and it takes precedence over IAM/OIDC. Never expose, log, or commit this value. Generate/manage the key in Amazon Bedrock > API keys for the target Region. API keys are limited to Bedrock and may have a short lifetime depending on how they were generated.
 - Redis rate limiting: provide either `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`, or `KV_REST_API_URL` + `KV_REST_API_TOKEN`. The `UPSTASH_*` pair takes precedence when both are present. Use a write-capable REST token: rate limiting calls `limit()` and writes counters. Do not use a read-only token. The app fails closed when no complete pair is available.
@@ -33,7 +33,19 @@ Write support is disabled by default. To enable the guarded paused-campaign flow
 
 Direct Marketing API support is separate from MCP. Set `META_SYSTEM_USER_TOKEN` only in server/Vercel environment variables; never put it in browser code or logs. The direct readiness endpoint uses the current pinned Graph API version `v26.0`, checks `/me/permissions`, and lists `/me/adaccounts?fields=id,name,account_status`. Direct campaign creation posts to `/act_{account_id}/campaigns` with `status=PAUSED`, `name`, `objective`, and required `special_ad_categories`, then reads back `/{campaign_id}?fields=id,name,objective,status,special_ad_categories` and reports success only if the actual status is `PAUSED`. `META_WRITE_ACCOUNT_IDS` is an explicit comma-separated allowlist. The same `META_WRITE_ENABLED=false` kill switch applies; activation, publishing, edits, and deletion are not implemented. Local checks do not perform live writes; verify permissions, accessible accounts, and readback with a non-production/test account after configuration.
 
-`BEDROCK_MODEL_IDS` is an optional comma-separated server-side allowlist. `BEDROCK_MODEL_ID` is always the default and is always allowed; client-supplied model IDs outside this list are rejected.
+`BEDROCK_MODEL_IDS` is an optional comma-separated server-side allowlist. Only IDs both configured on the server and in the quota-reviewed catalog below appear in the picker or pass chat API validation. If the default is absent or outside this catalog, the app fails closed with no selectable model rather than silently switching models. Saved conversations made with a removed model remain readable, but employees must explicitly choose an available model before continuing.
+
+The 27 October 2026 screenshots of the account's **Stockholm Anthropic quotas** showed positive global cross-region quota for these profiles (and the separate Bedrock Inference profiles screenshots showed these exact IDs):
+
+| Model | Global inference profile ID | Screenshot quota |
+| --- | --- | --- |
+| Claude Sonnet 4.6 | `global.anthropic.claude-sonnet-4-6` | 6M TPM / 50 RPM |
+| Claude Sonnet 4.5 | `global.anthropic.claude-sonnet-4-5-20250929-v1:0` | 5M TPM / 50 RPM |
+| Claude Haiku 4.5 | `global.anthropic.claude-haiku-4-5-20251001-v1:0` | 5M TPM / 50 RPM |
+| Claude Opus 4.6 | `global.anthropic.claude-opus-4-6-v1` | 3M TPM / 25 RPM |
+| Claude Opus 4.5 | `global.anthropic.claude-opus-4-5-20251101-v1:0` | 2M TPM / 25 RPM |
+
+For all five choices, set `BEDROCK_MODEL_ID=global.anthropic.claude-sonnet-4-6` and set `BEDROCK_MODEL_IDS` to the other four comma-separated profile IDs above in Vercel Production, then redeploy. Models with zero quota or without a shown positive quota are excluded. The two GPT OSS models also had positive quota in the screenshots, but are not included yet: this app's streaming tool workflow has not been live-verified with them. Quota is a throughput allowance, not prepaid credits or proof of model-access/IAM permissions; test each selected profile with a real read-only chat before offering it to employees. Review the catalog when AWS quotas change.
 
 ## Vercel and GitHub
 

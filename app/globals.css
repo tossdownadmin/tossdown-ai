@@ -107,6 +107,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .copy-action:hover { color: #e51451; }
 .chat-error { display: flex; align-items: center; gap: 16px; border: 1px solid #f1b7c6; border-radius: 10px; background: #fff4f6; padding: 12px 14px; color: #a8133b; font-size: 12px; }
 .chat-error button { margin-left: auto; border: 0; background: transparent; color: #a8133b; text-decoration: underline; }
+.model-notice { max-width: 720px; margin: 0 auto 22px; border: 1px solid #ead9ae; border-radius: 10px; background: #fffaf0; padding: 12px 14px; color: #73561a; font-size: 12px; line-height: 1.5; }
 
 .composer-area { position: relative; flex: 0 0 auto; padding: 13px 28px 18px; background: #fff; }
 .composer-shell { max-width: 790px; margin: 0 auto; border: 1px solid #dcdde1; border-radius: 17px; background: #fff; box-shadow: 0 4px 22px #1f25300c, 0 1px 3px #1f25300a; transition: border-color .15s, box-shadow .15s; }
